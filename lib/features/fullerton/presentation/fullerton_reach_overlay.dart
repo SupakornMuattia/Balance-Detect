@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:balance_detect/core/theme/app_theme.dart';
 import 'package:balance_detect/features/fullerton/domain/fullerton_reach_calibration_service.dart';
 import 'package:balance_detect/features/fullerton/domain/step_detection_service.dart';
@@ -83,8 +81,6 @@ class FullertonReachOverlayPainter extends CustomPainter {
   void _drawTarget(Canvas canvas, Size size, FullertonReachTarget reachTarget) {
     final start = _toOffset(reachTarget.startFingertip, size);
     final targetPoint = _toOffset(reachTarget.targetPoint, size);
-    final direction = targetPoint - start;
-    final angle = math.atan2(direction.dy, direction.dx);
     final targetColor = targetReached
         ? AppColors.normal
         : const Color(0xFFFFC247);
@@ -119,28 +115,13 @@ class FullertonReachOverlayPainter extends CustomPainter {
     canvas.drawCircle(targetPoint, 25, halo);
     canvas.drawCircle(targetPoint, 25, haloOutline);
 
-    canvas.save();
-    canvas.translate(targetPoint.dx, targetPoint.dy);
-    canvas.rotate(angle + math.pi / 2);
-    final pencil = Paint()..color = targetColor;
-    final pencilOutline = Paint()
-      ..color = Colors.black.withValues(alpha: .76)
+    // Target marker: a red dot at the target point (replaces the pencil icon).
+    final dotOutline = Paint()
+      ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final body = RRect.fromRectAndRadius(
-      const Rect.fromLTWH(-5, -23, 10, 40),
-      const Radius.circular(4),
-    );
-    canvas.drawRRect(body, pencil);
-    canvas.drawRRect(body, pencilOutline);
-    final tip = Path()
-      ..moveTo(-5, 17)
-      ..lineTo(5, 17)
-      ..lineTo(0, 26)
-      ..close();
-    canvas.drawPath(tip, Paint()..color = const Color(0xFFF4D3A1));
-    canvas.drawPath(tip, pencilOutline);
-    canvas.restore();
+      ..strokeWidth = 3;
+    canvas.drawCircle(targetPoint, 9, Paint()..color = const Color(0xFFE53935));
+    canvas.drawCircle(targetPoint, 9, dotOutline);
 
     final label = TextPainter(
       text: TextSpan(

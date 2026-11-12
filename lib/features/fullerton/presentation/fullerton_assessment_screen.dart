@@ -6,6 +6,7 @@ import 'package:balance_detect/core/domain/assessment_enums.dart';
 import 'package:balance_detect/core/errors/user_facing_exception.dart';
 import 'package:balance_detect/core/logging/app_logger.dart';
 import 'package:balance_detect/core/providers/app_providers.dart';
+import 'package:balance_detect/core/services/proximity_tone_service.dart';
 import 'package:balance_detect/core/services/screen_awake_service.dart';
 import 'package:balance_detect/core/services/voice_guidance_service.dart';
 import 'package:balance_detect/core/theme/app_theme.dart';
@@ -90,16 +91,17 @@ class _FullertonAssessmentScreenState
   int _armFootMismatchFrames = 0;
   int _readyFootMismatchFrames = 0;
   int _targetHitFrames = 0;
-  int _returnFrames = 0;
   double _baselineProgress = 0;
   double _armCalibrationProgress = 0;
   double? _currentTargetDistanceCm;
   String _armCalibrationMessage = 'ยกแขนข้างเดียวให้ตั้งฉากกับลำตัว';
   final _screenAwake = ScreenAwakeService.instance.createLease();
   final _voiceGuidance = VoiceGuidanceService();
+  final _targetTone = ProximityToneService();
   Timer? _positioningCountdownTimer;
   Timer? _readyCountdownTimer;
   Timer? _stepPermissionTimer;
+  Timer? _completionTimer;
   int? _positioningCountdown;
   int? _readyCountdown;
 
@@ -207,7 +209,7 @@ class _FullertonAssessmentScreenState
       state == FullertonState.footBaseline ||
       state == FullertonState.armCalibration ||
       state == FullertonState.ready ||
-      state == FullertonState.reaching;
+      (state == FullertonState.reaching && !_targetReached);
 
   bool _positioningReady(PoseFrame frame, PoseValidation validation) {
     final fingertip = frame[validation.primarySide.indexFinger];
@@ -476,6 +478,9 @@ class _FullertonAssessmentScreenState
     PoseValidation validation,
     PrimaryBodySide side,
   ) {
+    // Steps are counted only until the target is touched; the brief
+    // completion cue afterwards must not change the score.
+    if (_targetReached) return;
     if (!(validation.bodyVisible && validation.feetVisible)) return;
     final previousSteps = _snapshot?.stepCount ?? 0;
     _snapshot = _stepDetector.addFrame(frame);
@@ -496,7 +501,6 @@ class _FullertonAssessmentScreenState
         target == null ||
         calibration == null) {
       _targetHitFrames = 0;
-      _returnFrames = 0;
       return;
     }
     final targetDistance = _targetGeometry.metricDistanceCm(
@@ -506,38 +510,45 @@ class _FullertonAssessmentScreenState
       imageAspectRatio: frame.imageAspectRatio,
     );
     _currentTargetDistanceCm = targetDistance;
-    if (!_targetReached) {
-      _targetHitFrames =
-          targetDistance <= AssessmentConfig.fullertonTargetHitRadiusCm
-          ? _targetHitFrames + 1
-          : 0;
-      if (_targetHitFrames >=
-          AssessmentConfig.fullertonTargetConfirmationFrames) {
-        _targetReached = true;
-        _targetHitFrames = 0;
-        _stepPermissionTimer?.cancel();
-        _stepPermissionTimer = null;
-        unawaited(
-          _voiceGuidance.announce(
-            'ถึงเป้าหมายแล้ว กลับปลายนิ้วไปจุดเริ่มและยืนให้มั่นคง',
-            force: true,
-          ),
-        );
-      }
-      return;
-    }
-    final returnDistance = _targetGeometry.metricDistanceCm(
-      fingertip,
-      target.startFingertip,
-      calibration: calibration,
-      imageAspectRatio: frame.imageAspectRatio,
+    // Measure the audio cue to the edge of the hit zone so the gentlest
+    // tone is reached exactly where contact starts counting.
+    const hitRadius = AssessmentConfig.fullertonTargetHitRadiusCm;
+    _targetTone.updateDistance(
+      distanceCm: math.max(0, targetDistance - hitRadius),
+      referenceDistanceCm: math.max(1, target.targetDistanceCm - hitRadius),
     );
-    _returnFrames = returnDistance <= AssessmentConfig.fullertonReturnRadiusCm
-        ? _returnFrames + 1
-        : 0;
-    if (_returnFrames >= AssessmentConfig.fullertonTargetConfirmationFrames) {
-      _finishReach();
+    _targetHitFrames = targetDistance <= hitRadius ? _targetHitFrames + 1 : 0;
+    if (_targetHitFrames >=
+        AssessmentConfig.fullertonTargetConfirmationFrames) {
+      _onTargetTouched();
     }
+  }
+
+  /// Touching the target ends the reach: completion chime, then the spoken
+  /// "เสร็จสิ้น", then the score screen.
+  void _onTargetTouched() {
+    _targetReached = true;
+    _targetHitFrames = 0;
+    _stepPermissionTimer?.cancel();
+    _stepPermissionTimer = null;
+    AppLogger.event('fullerton_target_touched', <String, Object?>{
+      'stepCount': _snapshot?.stepCount ?? 0,
+    });
+    unawaited(_targetTone.playComplete());
+    _completionTimer?.cancel();
+    // Let the chime finish before speaking so the two do not overlap.
+    _completionTimer = Timer(
+      ProximityToneService.completionChimeDuration +
+          const Duration(milliseconds: 100),
+      () {
+        if (!mounted || _stateMachine.state != FullertonState.reaching) return;
+        unawaited(_voiceGuidance.announce('เสร็จสิ้น', force: true));
+        _completionTimer = Timer(const Duration(milliseconds: 900), () {
+          _completionTimer = null;
+          if (mounted) _finishReach();
+        });
+      },
+    );
   }
 
   void _startBaseline() {
@@ -674,8 +685,8 @@ class _FullertonAssessmentScreenState
     _stateMachine.transitionTo(FullertonState.reaching);
     _targetReached = false;
     _targetHitFrames = 0;
-    _returnFrames = 0;
     _currentTargetDistanceCm = null;
+    _targetTone.start();
     unawaited(
       _voiceGuidance.announce(
         'เริ่มเอื้อมแตะดินสอเสมือน โดยพยายามไม่เลื่อนเท้า',
@@ -757,6 +768,9 @@ class _FullertonAssessmentScreenState
     _cancelReadyCountdown();
     _stepPermissionTimer?.cancel();
     _stepPermissionTimer = null;
+    _completionTimer?.cancel();
+    _completionTimer = null;
+    unawaited(_targetTone.stop());
     _invalidReason = reason;
     _stateMachine.transitionTo(FullertonState.invalid);
     unawaited(_screenAwake.release());
@@ -808,6 +822,7 @@ class _FullertonAssessmentScreenState
     final enabled = !_voiceEnabled;
     setState(() => _voiceEnabled = enabled);
     unawaited(_voiceGuidance.setEnabled(enabled));
+    unawaited(_targetTone.setEnabled(enabled));
     if (enabled) {
       unawaited(_voiceGuidance.announce(_currentGuidance, force: true));
     }
@@ -823,7 +838,7 @@ class _FullertonAssessmentScreenState
     FullertonState.ready => 'ค้างท่าเดิม ระบบกำลังนับถอยหลัง',
     FullertonState.reaching =>
       _targetReached
-          ? 'กลับปลายนิ้วไปจุดเริ่มและยืนให้มั่นคง'
+          ? 'เสร็จสิ้น'
           : 'เอื้อมแตะดินสอเสมือนโดยพยายามไม่เลื่อนเท้า',
     _ => 'เปิดเสียงคำแนะนำแล้ว',
   };
@@ -852,8 +867,10 @@ class _FullertonAssessmentScreenState
     _positioningCountdownTimer?.cancel();
     _readyCountdownTimer?.cancel();
     _stepPermissionTimer?.cancel();
+    _completionTimer?.cancel();
     unawaited(_screenAwake.release());
     unawaited(_voiceGuidance.dispose());
+    unawaited(_targetTone.dispose());
     super.dispose();
   }
 
@@ -923,7 +940,7 @@ class _FullertonAssessmentScreenState
     FullertonState.armCalibration => 'คาลิเบรตแขนและปลายนิ้ว',
     FullertonState.ready => 'เป้าหมายพร้อม',
     FullertonState.reaching =>
-      _targetReached ? 'กลับสู่ท่าเริ่ม' : 'เอื้อมไปยังเป้าหมาย',
+      _targetReached ? 'เสร็จสิ้น' : 'เอื้อมไปยังเป้าหมาย',
     _ => 'Fullerton',
   };
 
@@ -947,7 +964,7 @@ class _FullertonAssessmentScreenState
       '${widget.protocolVariant.thaiLabel} · ค้างท่าเดิมเพื่อเริ่มอัตโนมัติ',
     FullertonState.reaching =>
       _targetReached
-          ? 'กลับปลายนิ้วไปจุดขาวและยืนมั่นคง ระบบจะจบเอง'
+          ? 'แตะเป้าหมายแล้ว กำลังแสดงผลคะแนน'
           : 'เอื้อมแตะดินสอเสมือน ระบบตรวจการเลื่อนเท้าอัตโนมัติ',
     _ => '',
   };
@@ -1193,17 +1210,13 @@ class _FullertonAssessmentScreenState
   Widget _buildReaching() => Column(
     children: [
       Icon(
-        _targetReached
-            ? Icons.keyboard_return_rounded
-            : Icons.ads_click_rounded,
+        _targetReached ? Icons.check_circle_rounded : Icons.ads_click_rounded,
         size: 38,
         color: _targetReached ? AppColors.normal : AppColors.primary,
       ),
       const SizedBox(height: 8),
       Text(
-        _targetReached
-            ? 'แตะเป้าหมายแล้ว กลับปลายนิ้วไปจุดเริ่มสีขาว'
-            : 'เอื้อมปลายนิ้วไปแตะดินสอเสมือน',
+        _targetReached ? 'เสร็จสิ้น' : 'เอื้อมปลายนิ้วไปแตะดินสอเสมือน',
         textAlign: TextAlign.center,
         style: Theme.of(context).textTheme.titleLarge,
       ),
@@ -1219,8 +1232,15 @@ class _FullertonAssessmentScreenState
         style: Theme.of(context).textTheme.titleMedium,
       ),
       const SizedBox(height: 8),
+      if (!_targetReached && _voiceEnabled) ...[
+        const Text(
+          'เสียงนำทาง: ไกลเป้าหมายเสียงดังและถี่ ยิ่งใกล้ยิ่งเบาและช้าลง',
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 8),
+      ],
       const Text(
-        'ไม่ต้องแตะหน้าจอ ระบบจะจบเมื่อถึงเป้าหมายและกลับท่าเริ่ม',
+        'ไม่ต้องแตะหน้าจอ ระบบจะจบและแสดงคะแนนเมื่อแตะถึงเป้าหมาย',
         textAlign: TextAlign.center,
       ),
     ],
