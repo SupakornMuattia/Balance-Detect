@@ -6,9 +6,14 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val tonePlayer = TonePlayer()
+    private var poseLandmarker: PoseLandmarkerBridge? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val poseBridge = PoseLandmarkerBridge(applicationContext)
+        poseLandmarker = poseBridge
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POSE_CHANNEL)
+            .setMethodCallHandler(poseBridge)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, TONE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -39,10 +44,12 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         tonePlayer.release()
+        poseLandmarker?.release()
         super.onDestroy()
     }
 
     private companion object {
         const val TONE_CHANNEL = "com.balancedetect/tone"
+        const val POSE_CHANNEL = "com.balancedetect/pose"
     }
 }

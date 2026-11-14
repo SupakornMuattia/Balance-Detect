@@ -25,6 +25,8 @@ class PoseDebugMetrics {
 }
 
 abstract interface class CameraPoseService {
+  /// Short name of the pose model in use, for the developer debug overlay.
+  String get engineLabel;
   CameraController? get cameraController;
   Stream<PoseFrame> get frames;
   Stream<Object> get errors;
@@ -69,6 +71,9 @@ class MlKitCameraPoseService implements CameraPoseService {
     DeviceOrientation.portraitDown: 180,
     DeviceOrientation.landscapeRight: 270,
   };
+
+  @override
+  String get engineLabel => 'ML Kit accurate';
 
   @override
   CameraController? get cameraController => _cameraController;

@@ -161,6 +161,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   onChanged: (value) =>
                       ref.read(debugOverlayProvider.notifier).setEnabled(value),
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Use MediaPipe pose tracking'),
+                  subtitle: const Text(
+                    'ปิดเพื่อกลับไปใช้ ML Kit (มีผลกับการทดสอบครั้งถัดไป)',
+                  ),
+                  value: ref.watch(poseEngineProvider) == PoseEngine.mediaPipe,
+                  onChanged: (value) => ref
+                      .read(poseEngineProvider.notifier)
+                      .select(value ? PoseEngine.mediaPipe : PoseEngine.mlKit),
+                ),
               ],
             ],
           ),

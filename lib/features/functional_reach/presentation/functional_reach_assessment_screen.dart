@@ -29,6 +29,7 @@ import 'package:balance_detect/features/pose/domain/pose_frame.dart';
 import 'package:balance_detect/features/pose/domain/pose_validation.dart';
 import 'package:balance_detect/features/pose/presentation/pose_skeleton_overlay.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service.dart';
+import 'package:balance_detect/features/pose/services/camera_pose_service_factory.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,7 +55,7 @@ class _FunctionalReachAssessmentScreenState
       const AnthropometricHeightCalibrationService();
   final _heightSpanSamples = <double>[];
   final String _sessionId = IdGenerator.generate('session');
-  late final MlKitCameraPoseService _cameraService;
+  late final CameraPoseService _cameraService;
   StreamSubscription<PoseFrame>? _frameSubscription;
   StreamSubscription<Object>? _errorSubscription;
   StreamSubscription<PoseDebugMetrics>? _metricsSubscription;
@@ -95,7 +96,7 @@ class _FunctionalReachAssessmentScreenState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_screenAwake.acquire());
-    _cameraService = MlKitCameraPoseService();
+    _cameraService = createCameraPoseService(ref.read(poseEngineProvider));
     _stateMachine.transitionTo(FunctionalReachState.positioning);
     unawaited(_voiceGuidance.initialize());
     unawaited(
@@ -778,9 +779,6 @@ class _FunctionalReachAssessmentScreenState
                     frame: _lastFrame,
                     trackedSide: _trackedSide,
                   ),
-                IgnorePointer(
-                  child: CustomPaint(painter: _CameraGuidePainter()),
-                ),
                 if (_showPoseSkeleton) _buildPoseDiagnostics(),
                 if (ref.watch(debugOverlayProvider)) _buildDebugOverlay(),
               ],
@@ -938,6 +936,7 @@ class _FunctionalReachAssessmentScreenState
         padding: const EdgeInsets.all(8),
         color: Colors.black.withValues(alpha: 0.72),
         child: Text(
+          '${_cameraService.engineLabel}\n'
           'FPS ${metrics?.framesPerSecond.toStringAsFixed(1) ?? '-'}\n'
           'pose ${metrics?.poseConfidence.toStringAsFixed(2) ?? '-'}\n'
           'wrist ${wrist == null ? '-' : '${wrist.x.toStringAsFixed(3)}, ${wrist.y.toStringAsFixed(3)}'}\n'
@@ -1141,29 +1140,4 @@ class _FunctionalReachAssessmentScreenState
       ),
     );
   }
-}
-
-class _CameraGuidePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.75)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          size.width * .18,
-          size.height * .05,
-          size.width * .64,
-          size.height * .90,
-        ),
-        const Radius.circular(70),
-      ),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

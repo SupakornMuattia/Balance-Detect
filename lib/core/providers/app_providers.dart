@@ -24,6 +24,20 @@ final debugOverlayProvider = NotifierProvider<DebugOverlayController, bool>(
   DebugOverlayController.new,
 );
 
+/// Which on-device model tracks the body skeleton in camera assessments.
+enum PoseEngine { mlKit, mediaPipe }
+
+class PoseEngineController extends Notifier<PoseEngine> {
+  @override
+  PoseEngine build() => PoseEngine.mediaPipe;
+
+  void select(PoseEngine engine) => state = engine;
+}
+
+final poseEngineProvider = NotifierProvider<PoseEngineController, PoseEngine>(
+  PoseEngineController.new,
+);
+
 class HistoryRevisionController extends Notifier<int> {
   @override
   int build() => 0;

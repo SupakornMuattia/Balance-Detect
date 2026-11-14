@@ -8,6 +8,7 @@ android {
     namespace = "com.balancedetect.balance_detect"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+    androidResources { noCompress += "task" }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -48,4 +49,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("com.google.mediapipe:tasks-vision:1.2.3")
 }

@@ -30,6 +30,7 @@ import 'package:balance_detect/features/pose/domain/pose_frame.dart';
 import 'package:balance_detect/features/pose/domain/pose_validation.dart';
 import 'package:balance_detect/features/pose/presentation/pose_skeleton_overlay.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service.dart';
+import 'package:balance_detect/features/pose/services/camera_pose_service_factory.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -60,7 +61,7 @@ class _FullertonAssessmentScreenState
   final _anthropometricCalibration =
       const AnthropometricHeightCalibrationService();
   final _targetGeometry = const FullertonTargetGeometry();
-  late final MlKitCameraPoseService _cameraService;
+  late final CameraPoseService _cameraService;
   StepDetectionService _stepDetector = StepDetectionService();
   FullertonArmCalibrationService _armCalibration =
       FullertonArmCalibrationService();
@@ -110,7 +111,7 @@ class _FullertonAssessmentScreenState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_screenAwake.acquire());
-    _cameraService = MlKitCameraPoseService();
+    _cameraService = createCameraPoseService(ref.read(poseEngineProvider));
     _stateMachine.transitionTo(FullertonState.positioning);
     unawaited(_voiceGuidance.initialize());
     _frameSubscription = _cameraService.frames.listen(_onFrame);
@@ -1029,6 +1030,7 @@ class _FullertonAssessmentScreenState
         padding: const EdgeInsets.all(8),
         color: Colors.black.withValues(alpha: .72),
         child: Text(
+          '${_cameraService.engineLabel}\n'
           'FPS ${_metrics?.framesPerSecond.toStringAsFixed(1) ?? '-'}\n'
           'pose ${_metrics?.poseConfidence.toStringAsFixed(2) ?? '-'}\n'
           'side ${side?.name ?? '-'}\n'
