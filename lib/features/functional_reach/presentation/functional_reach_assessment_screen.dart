@@ -10,9 +10,6 @@ import 'package:balance_detect/core/services/voice_guidance_service.dart';
 import 'package:balance_detect/core/utils/id_generator.dart';
 import 'package:balance_detect/core/utils/unit_conversion.dart';
 import 'package:balance_detect/core/widgets/app_scaffold_body.dart';
-import 'package:balance_detect/core/widgets/assessment_progress_header.dart';
-import 'package:balance_detect/core/widgets/auto_start_countdown_banner.dart';
-import 'package:balance_detect/core/widgets/checklist_tile.dart';
 import 'package:balance_detect/core/widgets/error_screens.dart';
 import 'package:balance_detect/core/widgets/loading_view.dart';
 import 'package:balance_detect/core/widgets/status_banner.dart';
@@ -27,6 +24,11 @@ import 'package:balance_detect/features/functional_reach/domain/reach_measuremen
 import 'package:balance_detect/features/functional_reach/presentation/reach_threshold_bar.dart';
 import 'package:balance_detect/features/pose/domain/pose_frame.dart';
 import 'package:balance_detect/features/pose/domain/pose_validation.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_assessment_layout.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_check_chips.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_colors.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_debug_panel.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_guide_frame.dart';
 import 'package:balance_detect/features/pose/presentation/pose_skeleton_overlay.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service_factory.dart';
@@ -89,7 +91,7 @@ class _FunctionalReachAssessmentScreenState
   int? _positioningCountdown;
   int? _readyCountdown;
   bool _voiceEnabled = true;
-  bool _showPoseSkeleton = true;
+  bool _debugVisible = true;
 
   @override
   void initState() {
@@ -679,51 +681,45 @@ class _FunctionalReachAssessmentScreenState
         body: LoadingView(label: 'กำลังเปิดกล้องและเตรียมระบบตรวจจับท่าทาง'),
       );
     }
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('วัดระยะเอื้อม'),
-        actions: [
-          IconButton(
-            onPressed: () {
-              setState(() => _showPoseSkeleton = !_showPoseSkeleton);
-            },
-            tooltip: _showPoseSkeleton ? 'ซ่อนโครงกระดูก' : 'แสดงโครงกระดูก',
-            icon: Icon(
-              Icons.accessibility_new_rounded,
-              color: _showPoseSkeleton
-                  ? Theme.of(context).colorScheme.primary
-                  : null,
-            ),
+    final developerMode = ref.watch(debugOverlayProvider);
+    final showDebug = developerMode && _debugVisible;
+    final controller = _cameraService.cameraController!;
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final aspectRatio = portrait
+        ? 1 / controller.value.aspectRatio
+        : controller.value.aspectRatio;
+    final state = _stateMachine.state;
+    final showGuideFrame =
+        state == FunctionalReachState.positioning ||
+        state == FunctionalReachState.calibrating;
+    final (icon, headline, subline) = _headerGuidance;
+    return CameraAssessmentLayout(
+      stepLabel: 'ขั้นที่ $_currentStep จาก 5: $_screenTitle',
+      guidanceIcon: icon,
+      headline: headline,
+      subline: subline,
+      voiceEnabled: _voiceEnabled,
+      onToggleVoice: _toggleVoice,
+      developerMode: developerMode,
+      debugVisible: _debugVisible,
+      onToggleDebug: () => setState(() => _debugVisible = !_debugVisible),
+      preview: CameraPreview(controller),
+      previewAspectRatio: aspectRatio,
+      previewLayers: [
+        if (showGuideFrame)
+          CameraGuideFrame(
+            showSilhouette:
+                state == FunctionalReachState.positioning &&
+                !(_validation?.bodyVisible ?? false),
           ),
-          IconButton(
-            onPressed: _toggleVoice,
-            tooltip: _voiceEnabled ? 'ปิดเสียงคำแนะนำ' : 'เปิดเสียงคำแนะนำ',
-            icon: Icon(
-              _voiceEnabled
-                  ? Icons.volume_up_outlined
-                  : Icons.volume_off_outlined,
-            ),
-          ),
-        ],
-      ),
-      body: AppScaffoldBody(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AssessmentProgressHeader(
-              currentStep: _currentStep,
-              totalSteps: 5,
-              title: _screenTitle,
-              detail: _screenDetail,
-            ),
-            const SizedBox(height: 16),
-            _buildCameraPanel(),
-            const SizedBox(height: 18),
-            _buildStageContent(),
-          ],
-        ),
-      ),
+        if (showDebug)
+          PoseSkeletonOverlay(frame: _lastFrame, trackedSide: _trackedSide),
+      ],
+      cameraTopRight: showDebug
+          ? FpsBadge(framesPerSecond: _debugMetrics?.framesPerSecond)
+          : null,
+      cameraBottom: showDebug ? _buildDebugPanel() : null,
+      bottom: _buildBottom(showDebug),
     );
   }
 
@@ -745,137 +741,299 @@ class _FunctionalReachAssessmentScreenState
     _ => 1,
   };
 
-  String get _screenDetail => switch (_stateMachine.state) {
-    FunctionalReachState.positioning =>
-      'ขยับมือถือหรือผู้ทดสอบจนทุกรายการขึ้นว่าพร้อม',
-    FunctionalReachState.calibrating =>
-      'อยู่นิ่ง ระบบกำลังใช้ส่วนสูง ${widget.heightCm.toStringAsFixed(0)} ซม. คำนวณสเกล',
-    FunctionalReachState.baseline => FunctionalReachInstructions.baselineDetail,
-    FunctionalReachState.ready =>
-      'เตรียมตัวให้พร้อม ระบบจะเริ่มเองหลังนับถอยหลัง',
-    FunctionalReachState.reaching => 'เอื้อมไปข้างหน้าโดยไม่ขยับเท้า',
-    _ => '',
-  };
-
-  Widget _buildCameraPanel() {
-    final controller = _cameraService.cameraController!;
-    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    final aspectRatio = portrait
-        ? 1 / controller.value.aspectRatio
-        : controller.value.aspectRatio;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 480),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: AspectRatio(
-            aspectRatio: aspectRatio,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                CameraPreview(controller),
-                if (_showPoseSkeleton)
-                  PoseSkeletonOverlay(
-                    frame: _lastFrame,
-                    trackedSide: _trackedSide,
-                  ),
-                if (_showPoseSkeleton) _buildPoseDiagnostics(),
-                if (ref.watch(debugOverlayProvider)) _buildDebugOverlay(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+  /// Icon, short headline and subline for the yellow guidance header.
+  (IconData, String, String?) get _headerGuidance {
+    switch (_stateMachine.state) {
+      case FunctionalReachState.positioning:
+        final validation = _validation;
+        if (validation == null) {
+          return (
+            Icons.search_rounded,
+            'กำลังค้นหา',
+            'ยืนให้กล้องเห็นตั้งแต่หัวถึงเท้า',
+          );
+        }
+        if (!validation.bodyVisible) {
+          return (
+            Icons.arrow_downward_rounded,
+            'ถอยหลังอีก',
+            'จนกล้องเห็นตั้งแต่หัวถึงเท้า',
+          );
+        }
+        if (!validation.armVisible) {
+          return (
+            Icons.accessibility_new_rounded,
+            'หันแขนเข้ากล้อง',
+            'ให้เห็นไหล่และข้อศอกฝั่งที่หันเข้ากล้อง',
+          );
+        }
+        if (!validation.feetVisible) {
+          return (
+            Icons.arrow_downward_rounded,
+            'ให้เห็นเท้า 2 ข้าง',
+            'ขยับกล้องลงหรือถอยออกอีกนิด',
+          );
+        }
+        if (!validation.sideView) {
+          return (
+            Icons.rotate_right_rounded,
+            'หันข้างเข้ากล้อง',
+            'ให้ไหล่ข้างหนึ่งหันเข้าหากล้อง',
+          );
+        }
+        if (!validation.canStart) {
+          return (
+            Icons.wb_sunny_outlined,
+            'ภาพยังไม่ชัด',
+            'เพิ่มแสงและอยู่นิ่ง',
+          );
+        }
+        final countdown = _positioningCountdown;
+        return (
+          Icons.check_rounded,
+          countdown == null ? 'อยู่นิ่ง' : 'อยู่นิ่ง $countdown',
+          'ตำแหน่งพร้อมแล้ว ระบบจะเริ่มเอง',
+        );
+      case FunctionalReachState.calibrating:
+        return (
+          Icons.straighten_rounded,
+          'อยู่นิ่ง',
+          'กำลังคำนวณสเกลจากส่วนสูง ${widget.heightCm.toStringAsFixed(0)} ซม.',
+        );
+      case FunctionalReachState.baseline:
+        final posture = _postureValidation;
+        final ready = posture?.canMeasure ?? false;
+        return (
+          Icons.front_hand_outlined,
+          ready ? 'ค้างท่าไว้' : 'ยกแขนไปข้างหน้า',
+          posture?.guidance ?? FunctionalReachInstructions.baselineDetail,
+        );
+      case FunctionalReachState.ready:
+        final countdown = _readyCountdown;
+        return (
+          Icons.timer_outlined,
+          countdown == null ? 'เตรียมเอื้อม' : 'เริ่มใน $countdown',
+          'เอื้อมไปข้างหน้าให้ไกลที่สุด ห้ามขยับเท้า',
+        );
+      case FunctionalReachState.reaching:
+        return (
+          Icons.arrow_forward_rounded,
+          'เอื้อมไปข้างหน้า',
+          'ให้ไกลที่สุดโดยไม่ขยับเท้า',
+        );
+      default:
+        return (Icons.info_outline_rounded, _screenTitle, null);
+    }
   }
 
   PrimaryBodySide? get _trackedSide =>
       _trackedArmSide ?? _validation?.primarySide;
 
-  Widget _buildPoseDiagnostics() {
-    final frame = _lastFrame;
-    final trackedSide = _trackedSide;
-    if (frame == null || trackedSide == null) {
-      return _buildPoseDiagnosticCard(
-        statusColor: Colors.white,
-        status: 'กำลังค้นหาร่างกาย',
-        lines: const ['ระบบจะเลือกแขนฝั่งที่หันเข้ากล้อง'],
-      );
-    }
-
-    final tracked = _postureService.validate(frame, trackedSide);
-    final armConfidence = _trackedArmConfidence(frame, trackedSide);
-    final sideLabel = trackedSide == PrimaryBodySide.left ? 'ซ้าย' : 'ขวา';
-    final (statusColor, status) = _poseDiagnosticStatus(tracked);
-    return _buildPoseDiagnosticCard(
-      statusColor: statusColor,
-      status: status,
-      lines: [
-        'ติดตามเฉพาะแขน$sideLabelของผู้ทดสอบ',
-        'จัดท่าตรวจไหล่–ข้อศอก$sideLabel · วัดจริงใช้ข้อมือ',
-        'ตรวจการขยับเท้า$sideLabelฝั่งกล้อง',
-        'แขน–ลำตัว ${_formatAngle(tracked.armToTorsoAngleDegrees)}',
-        'ข้อศอก ${_formatAngle(tracked.elbowAngleDegrees)}',
-        'ความมั่นใจแขน ${_formatConfidence(armConfidence)}  '
-            '· ${_formatFps(_debugMetrics?.framesPerSecond)}',
-        'แขนอีกข้างปล่อยไว้ข้างลำตัว (ไม่ใช้วัด)',
-      ],
-    );
-  }
-
-  Widget _buildPoseDiagnosticCard({
-    required Color statusColor,
-    required String status,
-    required List<String> lines,
-  }) {
-    return Align(
-      alignment: Alignment.topRight,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 230),
-        margin: const EdgeInsets.all(8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.74),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white.withValues(alpha: .24)),
+  Widget _buildBottom(bool showDebug) => switch (_stateMachine.state) {
+    FunctionalReachState.positioning => CameraCheckChips(
+      checks: _positioningChecks(showDebug),
+    ),
+    FunctionalReachState.calibrating => CameraStageStatus(
+      title: 'กำลังคำนวณสเกลจากส่วนสูง',
+      progress: _heightCalibrationProgress,
+      message: _heightCalibrationMessage.isEmpty
+          ? 'คำนวณสำเร็จ ระบบกำลังเตรียมขั้นตอนถัดไป'
+          : _heightCalibrationMessage,
+    ),
+    FunctionalReachState.baseline => CameraStageStatus(
+      title: 'ท่าถูกและอยู่นิ่งจนแถบเต็ม',
+      progress: _baselineProgress,
+      checks: [
+        CameraCheck(
+          label: 'แขน 90°',
+          passed: _postureValidation?.armPerpendicularToTorso ?? false,
+          pending: _postureValidation == null,
+          metric: showDebug
+              ? _formatAngle(_postureValidation?.armToTorsoAngleDegrees)
+              : null,
         ),
-        child: DefaultTextStyle(
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            height: 1.35,
-            fontWeight: FontWeight.w500,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      status,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 3),
-              for (final line in lines) Text(line),
-            ],
-          ),
+        CameraCheck(
+          label: 'ศอกตรง',
+          passed: _postureValidation?.elbowExtended ?? false,
+          pending: _postureValidation == null,
+          metric: showDebug
+              ? _formatAngle(_postureValidation?.elbowAngleDegrees)
+              : null,
+        ),
+      ],
+    ),
+    FunctionalReachState.ready => CameraStageStatus(
+      title: _readyPostureOk ? 'พร้อมเริ่ม' : 'จัดท่าแขนอีกครั้ง',
+      value: _readyCountdown?.toString(),
+      message: _readyPostureOk
+          ? 'ระบบจะเริ่มวัดเอง ไม่ต้องกดปุ่ม'
+          : _postureValidation?.guidance ??
+                FunctionalReachInstructions.readyPrompt,
+    ),
+    FunctionalReachState.reaching => CameraStageStatus(
+      title: 'กำลังวัด',
+      value:
+          '${_measurement?.maximumDistanceCm.toStringAsFixed(1) ?? '0.0'} ซม.',
+      progress: _reachProgress,
+      message: 'ระบบจะเก็บระยะสูงสุดตลอดช่วงทดสอบ',
+    ),
+    _ => const SizedBox.shrink(),
+  };
+
+  bool get _readyPostureOk =>
+      (_postureValidation?.canMeasure ?? false) &&
+      (_postureValidation?.reachPointVisible ?? false);
+
+  List<CameraCheck> _positioningChecks(bool showDebug) {
+    final validation = _validation;
+    final pending = validation == null;
+    final frame = _lastFrame;
+    final side = _trackedSide;
+    String? metric(String Function() build) => showDebug ? build() : null;
+    final sideLetter = side == PrimaryBodySide.left ? 'L' : 'R';
+    return [
+      CameraCheck(
+        label: 'ทั้งตัว',
+        passed: validation?.bodyVisible ?? false,
+        pending: pending,
+        metric: metric(
+          () =>
+              'ankle ${_formatConfidence(side == null ? null : frame?[side.ankle]?.confidence)}',
         ),
       ),
+      CameraCheck(
+        label: 'ไหล่–ศอก',
+        passed: validation?.armVisible ?? false,
+        pending: pending,
+        metric: metric(
+          () =>
+              '$sideLetter arm ${_formatConfidence(frame == null || side == null ? null : _trackedArmConfidence(frame, side))}',
+        ),
+      ),
+      CameraCheck(
+        label: 'เท้า 2 ข้าง',
+        passed: validation?.feetVisible ?? false,
+        pending: pending,
+        metric: metric(() => 'heel ${_heelConfidenceLabel(frame)}'),
+      ),
+      CameraCheck(
+        label: 'หันข้าง',
+        passed: validation?.sideView ?? false,
+        pending: pending,
+        metric: metric(() => 'sh.w ${_shoulderWidthLabel(frame)}'),
+      ),
+    ];
+  }
+
+  String _heelConfidenceLabel(PoseFrame? frame) {
+    final left = frame?[BodyLandmark.leftHeel];
+    final right = frame?[BodyLandmark.rightHeel];
+    if (left == null || right == null) return 'n/a';
+    final lowest = left.confidence < right.confidence
+        ? left.confidence
+        : right.confidence;
+    return lowest.toStringAsFixed(2);
+  }
+
+  /// Shoulder separation relative to torso length; small values mean the
+  /// person is standing side-on to the camera.
+  String _shoulderWidthLabel(PoseFrame? frame) {
+    final ls = frame?[BodyLandmark.leftShoulder];
+    final rs = frame?[BodyLandmark.rightShoulder];
+    final lh = frame?[BodyLandmark.leftHip];
+    final rh = frame?[BodyLandmark.rightHip];
+    if (ls == null || rs == null || lh == null || rh == null) return 'n/a';
+    final torso = (ls.distanceTo(lh) + rs.distanceTo(rh)) / 2;
+    if (torso == 0) return 'n/a';
+    return ((ls.x - rs.x).abs() / torso).toStringAsFixed(2);
+  }
+
+  String get _systemStateLabel => switch (_stateMachine.state) {
+    FunctionalReachState.positioning =>
+      (_validation?.canStart ?? false) ? 'POSE_READY' : 'WAIT_POSE',
+    FunctionalReachState.calibrating => 'CALIBRATING',
+    FunctionalReachState.baseline => 'BASELINE',
+    FunctionalReachState.ready => 'READY',
+    FunctionalReachState.reaching => 'REACHING',
+    final other => other.name.toUpperCase(),
+  };
+
+  Widget _buildDebugPanel() {
+    final frame = _lastFrame;
+    final trackedSide = _trackedSide;
+    final fps = _debugMetrics?.framesPerSecond;
+    final snapshot = _measurement?.snapshot;
+    final sideLabel = trackedSide == null
+        ? null
+        : trackedSide == PrimaryBodySide.left
+        ? 'ซ้าย'
+        : 'ขวา';
+    final posture = frame == null || trackedSide == null
+        ? null
+        : _postureService.validate(frame, trackedSide);
+    final armConfidence = frame == null || trackedSide == null
+        ? null
+        : _trackedArmConfidence(frame, trackedSide);
+    final (statusColor, status) = posture == null
+        ? (Colors.white, 'กำลังค้นหาร่างกาย')
+        : _poseDiagnosticStatus(posture);
+    final armConfidenceOk =
+        armConfidence != null &&
+        armConfidence >= AssessmentConfig.poseConfidenceThreshold;
+    final footMoving =
+        snapshot != null &&
+        snapshot.trackedFootMovementCm >= snapshot.footMovementThresholdCm;
+    return CameraDebugPanel(
+      logEventName: 'camera_debug_snapshot',
+      statusColor: statusColor,
+      status: status,
+      confidence: armConfidence,
+      rows: [
+        CameraDebugRow('สถานะระบบ', _systemStateLabel),
+        CameraDebugRow(
+          'แขนที่ติดตาม',
+          sideLabel == null ? '—' : '$sideLabel (ฝั่งกล้อง)',
+        ),
+        CameraDebugRow(
+          'ความมั่นใจแขน',
+          '${_formatConfidence(armConfidence)} / '
+              '${AssessmentConfig.poseConfidenceThreshold.toStringAsFixed(2)}',
+          color: armConfidenceOk ? CameraColors.devGood : CameraColors.devBad,
+        ),
+        CameraDebugRow(
+          'มุมแขน–ลำตัว',
+          _formatAngle(posture?.armToTorsoAngleDegrees),
+        ),
+        CameraDebugRow('มุมศอก', _formatAngle(posture?.elbowAngleDegrees)),
+        CameraDebugRow(
+          'จุดจัดท่า',
+          sideLabel == null ? '—' : 'ไหล่–ศอก $sideLabel',
+        ),
+        CameraDebugRow(
+          'จุดวัดจริง',
+          sideLabel == null ? '—' : 'ข้อมือ$sideLabel',
+        ),
+        CameraDebugRow(
+          'เท้าขยับ',
+          snapshot == null
+              ? 'ไม่'
+              : '${footMoving ? 'ใช่' : 'ไม่'} '
+                    '(${snapshot.trackedFootMovementCm.toStringAsFixed(1)}/'
+                    '${snapshot.footMovementThresholdCm.toStringAsFixed(1)} ซม.)',
+          color: footMoving ? CameraColors.devBad : CameraColors.devGood,
+        ),
+        const CameraDebugRow('แขนอีกข้าง', 'ข้างตัว (ไม่วัด)'),
+        CameraDebugRow(
+          'ระยะเอื้อม',
+          '${_measurement?.maximumDistanceCm.toStringAsFixed(1) ?? '—'} ซม.',
+        ),
+        CameraDebugRow('เอนจิน', _cameraService.engineLabel),
+        CameraDebugRow(
+          'อัตราเฟรม',
+          _formatFps(fps),
+          color: CameraColors.devBad,
+        ),
+      ],
     );
   }
 
@@ -921,182 +1079,6 @@ class _FunctionalReachAssessmentScreenState
 
   String _formatFps(double? fps) =>
       fps == null ? '— fps' : '${fps.toStringAsFixed(0)} fps';
-
-  Widget _buildDebugOverlay() {
-    final metrics = _debugMetrics;
-    final reachSnapshot = _measurement?.snapshot;
-    final trackedSide = _trackedSide;
-    final wrist = trackedSide == null || _lastFrame == null
-        ? null
-        : _lastFrame![trackedSide.wrist];
-    return Align(
-      alignment: Alignment.topLeft,
-      child: Container(
-        margin: const EdgeInsets.all(8),
-        padding: const EdgeInsets.all(8),
-        color: Colors.black.withValues(alpha: 0.72),
-        child: Text(
-          '${_cameraService.engineLabel}\n'
-          'FPS ${metrics?.framesPerSecond.toStringAsFixed(1) ?? '-'}\n'
-          'pose ${metrics?.poseConfidence.toStringAsFixed(2) ?? '-'}\n'
-          'wrist ${wrist == null ? '-' : '${wrist.x.toStringAsFixed(3)}, ${wrist.y.toStringAsFixed(3)}'}\n'
-          'reach ${_measurement?.maximumDistanceCm.toStringAsFixed(1) ?? '-'} cm\n'
-          'foot ${reachSnapshot?.trackedFootSide?.name ?? '-'} '
-          '${reachSnapshot?.trackedFootMovementCm.toStringAsFixed(1) ?? '-'} / '
-          '${reachSnapshot?.footMovementThresholdCm.toStringAsFixed(1) ?? '-'} cm\n'
-          'raw ${reachSnapshot?.trackedFootRawMovementCm.toStringAsFixed(1) ?? '-'} '
-          'rel ${reachSnapshot?.trackedFootRelativeMovementCm.toStringAsFixed(1) ?? '-'} '
-          'ankle ${reachSnapshot?.trackedFootAnkleMovementCm.toStringAsFixed(1) ?? '-'} cm',
-          style: const TextStyle(color: Colors.white, fontSize: 12),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStageContent() => switch (_stateMachine.state) {
-    FunctionalReachState.positioning => _buildPositioning(),
-    FunctionalReachState.calibrating => _buildCalibration(),
-    FunctionalReachState.baseline => _buildBaseline(),
-    FunctionalReachState.ready => _buildReady(),
-    FunctionalReachState.reaching => _buildReaching(),
-    _ => const SizedBox.shrink(),
-  };
-
-  Widget _buildPositioning() {
-    final validation = _validation;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          validation?.guidance ?? 'กำลังค้นหาร่างกาย',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 10),
-        ChecklistTile(
-          label: 'เห็นร่างกายครบ',
-          passed: validation?.bodyVisible ?? false,
-          pending: validation == null,
-        ),
-        ChecklistTile(
-          label: 'เห็นไหล่และข้อศอกฝั่งที่หันเข้ากล้อง',
-          passed: validation?.armVisible ?? false,
-          pending: validation == null,
-        ),
-        ChecklistTile(
-          label: 'เห็นเท้าทั้งสองข้าง',
-          passed: validation?.feetVisible ?? false,
-          pending: validation == null,
-        ),
-        ChecklistTile(
-          label: 'หันด้านข้าง',
-          passed: validation?.sideView ?? false,
-          pending: validation == null,
-        ),
-        const SizedBox(height: 14),
-        AutoStartCountdownBanner(
-          seconds: _positioningCountdown,
-          readyMessage: validation?.canStart == true
-              ? 'จัดตำแหน่งครบแล้ว'
-              : 'ทำตามคำแนะนำเพื่อจัดตำแหน่ง',
-          countdownMessage: 'ไม่ต้องกดปุ่ม ระบบจะไปขั้นตอนปรับเทียบเอง',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCalibration() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        'กำลังคำนวณสเกลจากส่วนสูง',
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      const SizedBox(height: 8),
-      Text(
-        'ส่วนสูงที่กรอก: ${widget.heightCm.toStringAsFixed(0)} ซม.',
-        style: Theme.of(context).textTheme.bodyLarge,
-      ),
-      const SizedBox(height: 14),
-      LinearProgressIndicator(value: _heightCalibrationProgress),
-      const SizedBox(height: 10),
-      Text(
-        _heightCalibrationMessage.isEmpty
-            ? 'คำนวณสำเร็จ ระบบกำลังเตรียมขั้นตอนถัดไป'
-            : _heightCalibrationMessage,
-        style: Theme.of(context).textTheme.bodyMedium,
-      ),
-    ],
-  );
-
-  Widget _buildBaseline() {
-    final posture = _postureValidation;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          posture?.guidance ?? FunctionalReachInstructions.baselinePrompt,
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 10),
-        ChecklistTile(
-          label: 'ต้นแขนฝั่งกล้องตั้งฉากกับลำตัวประมาณ 90°',
-          passed: posture?.armPerpendicularToTorso ?? false,
-          pending: posture == null,
-        ),
-        ChecklistTile(
-          label: 'เหยียดข้อศอกฝั่งกล้องให้ตรง',
-          passed: posture?.elbowExtended ?? false,
-          pending: posture == null,
-        ),
-        const SizedBox(height: 14),
-        LinearProgressIndicator(value: _baselineProgress.clamp(0.0, 1.0)),
-        const SizedBox(height: 10),
-        const Text('ท่าถูกและอยู่นิ่งจนแถบเต็ม ระบบจะไปขั้นถัดไปเอง'),
-      ],
-    );
-  }
-
-  Widget _buildReady() {
-    final postureReady =
-        (_postureValidation?.canMeasure ?? false) &&
-        (_postureValidation?.reachPointVisible ?? false);
-    return Column(
-      children: [
-        StatusBanner(
-          status: postureReady
-              ? AssessmentStatus.normal
-              : AssessmentStatus.warning,
-          label: postureReady ? 'พร้อมเริ่ม' : 'จัดท่าแขนอีกครั้ง',
-          detail: postureReady
-              ? 'เอื้อมไปข้างหน้าให้ไกลที่สุด ห้ามขยับเท้า'
-              : _postureValidation?.guidance ?? 'กำลังตรวจท่าแขน',
-        ),
-        const SizedBox(height: 18),
-        AutoStartCountdownBanner(
-          seconds: _readyCountdown,
-          readyMessage: postureReady
-              ? 'เตรียมตัวได้เลย'
-              : FunctionalReachInstructions.readyPrompt,
-          countdownMessage: 'ระบบจะเริ่มวัดเอง ไม่ต้องกดปุ่ม',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildReaching() => Column(
-    children: [
-      Text('กำลังวัด', style: Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height: 6),
-      Text(
-        '${_measurement?.maximumDistanceCm.toStringAsFixed(1) ?? '0.0'} ซม.',
-        style: Theme.of(context).textTheme.displaySmall,
-      ),
-      const SizedBox(height: 14),
-      LinearProgressIndicator(value: _reachProgress.clamp(0.0, 1.0)),
-      const SizedBox(height: 10),
-      const Text('ระบบจะเก็บระยะสูงสุดตลอดช่วงทดสอบ'),
-    ],
-  );
 
   Widget _buildResult() {
     final result = _result!;

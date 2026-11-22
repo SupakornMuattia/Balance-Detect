@@ -41,7 +41,7 @@ abstract final class AppTheme {
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: AppColors.background,
-      fontFamily: 'sans-serif',
+      fontFamily: 'IBMPlexSansThaiLooped',
       visualDensity: VisualDensity.standard,
       textTheme: const TextTheme(
         displaySmall: TextStyle(

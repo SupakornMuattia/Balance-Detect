@@ -12,9 +12,6 @@ import 'package:balance_detect/core/services/voice_guidance_service.dart';
 import 'package:balance_detect/core/theme/app_theme.dart';
 import 'package:balance_detect/core/utils/id_generator.dart';
 import 'package:balance_detect/core/widgets/app_scaffold_body.dart';
-import 'package:balance_detect/core/widgets/assessment_progress_header.dart';
-import 'package:balance_detect/core/widgets/auto_start_countdown_banner.dart';
-import 'package:balance_detect/core/widgets/checklist_tile.dart';
 import 'package:balance_detect/core/widgets/error_screens.dart';
 import 'package:balance_detect/core/widgets/loading_view.dart';
 import 'package:balance_detect/features/assessment/domain/assessment_session.dart';
@@ -28,6 +25,11 @@ import 'package:balance_detect/features/functional_reach/domain/distance_calibra
 import 'package:balance_detect/features/functional_reach/domain/functional_reach_posture_service.dart';
 import 'package:balance_detect/features/pose/domain/pose_frame.dart';
 import 'package:balance_detect/features/pose/domain/pose_validation.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_assessment_layout.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_check_chips.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_colors.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_debug_panel.dart';
+import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_guide_frame.dart';
 import 'package:balance_detect/features/pose/presentation/pose_skeleton_overlay.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service_factory.dart';
@@ -105,6 +107,7 @@ class _FullertonAssessmentScreenState
   Timer? _completionTimer;
   int? _positioningCountdown;
   int? _readyCountdown;
+  bool _debugVisible = true;
 
   @override
   void initState() {
@@ -899,39 +902,52 @@ class _FullertonAssessmentScreenState
         body: LoadingView(label: 'กำลังเปิดกล้องและเตรียมระบบคาลิเบรต'),
       );
     }
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Fullerton: เอื้อมหยิบ'),
-        actions: [
-          IconButton(
-            onPressed: _toggleVoice,
-            tooltip: _voiceEnabled ? 'ปิดเสียงคำแนะนำ' : 'เปิดเสียงคำแนะนำ',
-            icon: Icon(
-              _voiceEnabled
-                  ? Icons.volume_up_outlined
-                  : Icons.volume_off_outlined,
-            ),
+    final developerMode = ref.watch(debugOverlayProvider);
+    final showDebug = developerMode && _debugVisible;
+    final controller = _cameraService.cameraController!;
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final ratio = portrait
+        ? 1 / controller.value.aspectRatio
+        : controller.value.aspectRatio;
+    final overlaySide = _trackedArmSide ?? _validation?.primarySide;
+    final positioning = _stateMachine.state == FullertonState.positioning;
+    final (icon, headline, subline) = _headerGuidance;
+    return CameraAssessmentLayout(
+      stepLabel: 'ขั้นที่ $_currentStep จาก 5: $_title',
+      guidanceIcon: icon,
+      headline: headline,
+      subline: subline,
+      voiceEnabled: _voiceEnabled,
+      onToggleVoice: _toggleVoice,
+      developerMode: developerMode,
+      debugVisible: _debugVisible,
+      onToggleDebug: () => setState(() => _debugVisible = !_debugVisible),
+      preview: CameraPreview(controller),
+      previewAspectRatio: ratio,
+      previewLayers: [
+        if (positioning)
+          CameraGuideFrame(
+            showSilhouette: !(_validation?.bodyVisible ?? false),
           ),
-        ],
-      ),
-      body: AppScaffoldBody(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AssessmentProgressHeader(
-              currentStep: _currentStep,
-              totalSteps: 5,
-              title: _title,
-              detail: _stepDetail,
-            ),
-            const SizedBox(height: 16),
-            _cameraPreview(),
-            const SizedBox(height: 18),
-            _stageContent(),
-          ],
+        if (showDebug)
+          PoseSkeletonOverlay(frame: _lastFrame, trackedSide: overlaySide),
+        FullertonReachOverlay(
+          footBaseline: _stepDetector.baseline,
+          target: _reachTarget,
+          targetReached: _targetReached,
         ),
-      ),
+      ],
+      cameraTopRight: showDebug
+          ? FpsBadge(framesPerSecond: _metrics?.framesPerSecond)
+          : null,
+      cameraBottom: showDebug ? _buildDebugPanel() : null,
+      caption:
+          _stateMachine.state == FullertonState.reaching &&
+              !_targetReached &&
+              _voiceEnabled
+          ? 'ยิ่งใกล้เป้าหมาย เสียงยิ่งเบาและช้าลง'
+          : 'ฟังเสียงแล้วทำตาม ไม่ต้องกดปุ่ม',
+      bottom: _buildBottom(showDebug),
     );
   }
 
@@ -954,22 +970,6 @@ class _FullertonAssessmentScreenState
     _ => 1,
   };
 
-  String get _stepDetail => switch (_stateMachine.state) {
-    FullertonState.positioning =>
-      'ให้เห็นด้านข้างทั้งตัว แขน ปลายนิ้ว และเท้าสองข้าง',
-    FullertonState.footBaseline =>
-      'ยืนตามสบายและอยู่นิ่ง ระบบจำตำแหน่งจริง ไม่บังคับความกว้างเท้า',
-    FullertonState.armCalibration =>
-      'ยกแขนข้างเดียว 90° กับลำตัว เหยียดข้อศอกและนิ้ว',
-    FullertonState.ready =>
-      '${widget.protocolVariant.thaiLabel} · ค้างท่าเดิมเพื่อเริ่มอัตโนมัติ',
-    FullertonState.reaching =>
-      _targetReached
-          ? 'แตะเป้าหมายแล้ว กำลังแสดงผลคะแนน'
-          : 'เอื้อมแตะดินสอเสมือน ระบบตรวจการเลื่อนเท้าอัตโนมัติ',
-    _ => '',
-  };
-
   String get _invalidMessage => switch (_invalidReason) {
     InvalidReason.poseLost =>
       'ระบบมองไม่เห็นร่างกาย ปลายนิ้ว หรือเท้าครบระหว่างการทดสอบ',
@@ -981,272 +981,312 @@ class _FullertonAssessmentScreenState
     _ => 'ลำดับการทดสอบไม่สมบูรณ์ กรุณาลองอีกครั้ง',
   };
 
-  Widget _cameraPreview() {
-    final controller = _cameraService.cameraController!;
-    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    final ratio = portrait
-        ? 1 / controller.value.aspectRatio
-        : controller.value.aspectRatio;
-    final overlaySide = _trackedArmSide ?? _validation?.primarySide;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 480),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: AspectRatio(
-            aspectRatio: ratio,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                CameraPreview(controller),
-                PoseSkeletonOverlay(
-                  frame: _lastFrame,
-                  trackedSide: overlaySide,
-                ),
-                FullertonReachOverlay(
-                  footBaseline: _stepDetector.baseline,
-                  target: _reachTarget,
-                  targetReached: _targetReached,
-                ),
-                if (ref.watch(debugOverlayProvider)) _buildDebugOverlay(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDebugOverlay() {
-    final frame = _lastFrame;
-    final side = _trackedArmSide ?? _validation?.primarySide;
+  bool _fingertipVisible(PoseFrame? frame, PrimaryBodySide? side) {
     final fingertip = frame == null || side == null
         ? null
         : frame[side.indexFinger];
-    return Align(
-      alignment: Alignment.topLeft,
-      child: Container(
-        margin: const EdgeInsets.all(8),
-        padding: const EdgeInsets.all(8),
-        color: Colors.black.withValues(alpha: .72),
-        child: Text(
-          '${_cameraService.engineLabel}\n'
-          'FPS ${_metrics?.framesPerSecond.toStringAsFixed(1) ?? '-'}\n'
-          'pose ${_metrics?.poseConfidence.toStringAsFixed(2) ?? '-'}\n'
-          'side ${side?.name ?? '-'}\n'
-          'finger ${fingertip == null ? '-' : '${fingertip.x.toStringAsFixed(3)},${fingertip.y.toStringAsFixed(3)}'}\n'
-          'arm ${_postureValidation?.armToTorsoAngleDegrees?.toStringAsFixed(0) ?? '-'}° '
-          'elbow ${_postureValidation?.elbowAngleDegrees?.toStringAsFixed(0) ?? '-'}°\n'
-          'target ${_currentTargetDistanceCm?.toStringAsFixed(1) ?? '-'} cm\n'
-          'steps ${_snapshot?.stepCount ?? 0}\n'
-          'L ${_snapshot?.leftFootMovement.toStringAsFixed(3) ?? '-'} '
-          'R ${_snapshot?.rightFootMovement.toStringAsFixed(3) ?? '-'}',
-          style: const TextStyle(color: Colors.white, fontSize: 11),
-        ),
-      ),
-    );
+    return fingertip != null &&
+        fingertip.confidence >= AssessmentConfig.poseConfidenceThreshold;
   }
 
-  Widget _stageContent() => switch (_stateMachine.state) {
-    FullertonState.positioning => _buildPositioning(),
-    FullertonState.footBaseline => _buildFootCalibration(),
-    FullertonState.armCalibration => _buildArmCalibration(),
-    FullertonState.ready => _buildReady(),
-    FullertonState.reaching => _buildReaching(),
-    _ => const SizedBox.shrink(),
-  };
+  /// Icon, short headline and subline for the yellow guidance header.
+  (IconData, String, String?) get _headerGuidance {
+    switch (_stateMachine.state) {
+      case FullertonState.positioning:
+        final validation = _validation;
+        final frame = _lastFrame;
+        if (validation == null || frame == null) {
+          return (
+            Icons.search_rounded,
+            'กำลังค้นหา',
+            'ยืนด้านข้างให้กล้องเห็นตั้งแต่หัวถึงเท้า',
+          );
+        }
+        if (!validation.bodyVisible) {
+          return (
+            Icons.arrow_downward_rounded,
+            'ถอยหลังอีก',
+            'จนกล้องเห็นตั้งแต่หัวถึงเท้า',
+          );
+        }
+        if (!validation.armVisible) {
+          return (
+            Icons.accessibility_new_rounded,
+            'หันแขนเข้ากล้อง',
+            'ให้เห็นไหล่และข้อศอกฝั่งที่หันเข้ากล้อง',
+          );
+        }
+        if (!validation.feetVisible ||
+            !_stepDetector.canObserveBothFeet(frame)) {
+          return (
+            Icons.arrow_downward_rounded,
+            'ให้เห็นเท้า 2 ข้าง',
+            'เห็นข้อเท้า ส้นเท้า และปลายเท้าแยกกัน',
+          );
+        }
+        if (!validation.sideView) {
+          return (
+            Icons.rotate_right_rounded,
+            'หันข้างเข้ากล้อง',
+            'ให้ไหล่ข้างหนึ่งหันเข้าหากล้อง',
+          );
+        }
+        if (!validation.canStart) {
+          return (
+            Icons.wb_sunny_outlined,
+            'ภาพยังไม่ชัด',
+            'เพิ่มแสงและอยู่นิ่ง',
+          );
+        }
+        if (!_fingertipVisible(frame, validation.primarySide)) {
+          return (
+            Icons.back_hand_outlined,
+            'ให้เห็นปลายนิ้ว',
+            'ของแขนฝั่งที่หันเข้ากล้อง',
+          );
+        }
+        final countdown = _positioningCountdown;
+        return (
+          Icons.check_rounded,
+          countdown == null ? 'อยู่นิ่ง' : 'อยู่นิ่ง $countdown',
+          'ตำแหน่งพร้อมแล้ว ระบบจะเริ่มเอง',
+        );
+      case FullertonState.footBaseline:
+        return (
+          Icons.accessibility_rounded,
+          'ยืนนิ่ง',
+          'ระบบกำลังจำตำแหน่งเท้า',
+        );
+      case FullertonState.armCalibration:
+        return (Icons.front_hand_outlined, 'ยกแขน 90°', _armCalibrationMessage);
+      case FullertonState.ready:
+        final countdown = _readyCountdown;
+        return (
+          Icons.timer_outlined,
+          countdown == null ? 'ค้างท่าไว้' : 'เริ่มใน $countdown',
+          _readyPoseValid
+              ? 'ค้างท่าเดิม ระบบกำลังนับถอยหลัง'
+              : 'นำปลายนิ้วกลับจุดขาวและวางเท้าที่เดิม',
+        );
+      case FullertonState.reaching:
+        return _targetReached
+            ? (Icons.check_rounded, 'เสร็จสิ้น', 'กำลังแสดงผลคะแนน')
+            : (
+                Icons.ads_click_rounded,
+                'แตะดินสอเสมือน',
+                'เอื้อมโดยพยายามไม่เลื่อนเท้า',
+              );
+      default:
+        return (Icons.info_outline_rounded, _title, null);
+    }
+  }
 
-  Widget _buildPositioning() {
+  Widget _buildBottom(bool showDebug) {
+    switch (_stateMachine.state) {
+      case FullertonState.positioning:
+        return CameraCheckChips(checks: _positioningChecks(showDebug));
+      case FullertonState.footBaseline:
+        return CameraStageStatus(
+          title: 'ยืนวางเท้าตามสบายแล้วอยู่นิ่ง',
+          progress: _baselineProgress,
+          message:
+              'ใช้ส่วนสูง ${widget.heightCm.toStringAsFixed(0)} ซม. คำนวณสเกลภาพ · ถ้าเท้าไม่นิ่ง ระบบจะเก็บใหม่เอง',
+        );
+      case FullertonState.armCalibration:
+        final posture = _postureValidation;
+        return CameraStageStatus(
+          title: 'คาลิเบรตแขน',
+          progress: _armCalibrationProgress,
+          message:
+              'มุมแขน ${posture?.armToTorsoAngleDegrees?.toStringAsFixed(0) ?? '—'}° · '
+              'ข้อศอก ${posture?.elbowAngleDegrees?.toStringAsFixed(0) ?? '—'}°',
+          checks: [
+            CameraCheck(
+              label: 'แขน 90°',
+              passed: posture?.armPerpendicularToTorso ?? false,
+              pending: posture == null,
+            ),
+            CameraCheck(
+              label: 'ศอกตรง',
+              passed: posture?.elbowExtended ?? false,
+              pending: posture == null,
+            ),
+            CameraCheck(
+              label: 'ปลายนิ้ว',
+              passed: _fingertipVisible(_lastFrame, _trackedArmSide),
+              pending: _lastFrame == null,
+            ),
+            CameraCheck(
+              label: 'เท้าที่เดิม',
+              passed: _armFootMismatchFrames == 0,
+              pending: _stepDetector.baseline == null,
+            ),
+          ],
+        );
+      case FullertonState.ready:
+        return CameraStageStatus(
+          title: 'เป้าหมายเสมือนพร้อม',
+          value: _readyCountdown?.toString(),
+          message: widget.protocolVariant.isStandard
+              ? '${widget.protocolVariant.thaiLabel} · จุดเป้าหมายถูกตรึงแล้ว'
+              : '${widget.protocolVariant.thaiLabel} · โหมด 1 ฟุตเป็น Modified FAB; ระยะมาตรฐานคือ 10 นิ้ว',
+        );
+      case FullertonState.reaching:
+        return CameraStageStatus(
+          title: _targetReached ? 'แตะเป้าหมายแล้ว' : 'เหลือถึงเป้าหมาย',
+          value: _targetReached || _currentTargetDistanceCm == null
+              ? null
+              : '${_currentTargetDistanceCm!.toStringAsFixed(1)} ซม.',
+          message: 'ตรวจพบ ${_snapshot?.stepCount ?? 0} ก้าว',
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  List<CameraCheck> _positioningChecks(bool showDebug) {
     final validation = _validation;
     final frame = _lastFrame;
     final side = validation?.primarySide;
+    final pending = validation == null || frame == null;
     final fingertip = frame == null || side == null
         ? null
         : frame[side.indexFinger];
-    final fingertipVisible =
-        fingertip != null &&
-        fingertip.confidence >= AssessmentConfig.poseConfidenceThreshold;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          frame == null ? 'กำลังค้นหาร่างกาย' : _positioningGuidance(frame),
-          style: Theme.of(context).textTheme.titleMedium,
+    String? metric(String Function() build) => showDebug ? build() : null;
+    final sideLetter = side == PrimaryBodySide.left ? 'L' : 'R';
+    return [
+      CameraCheck(
+        label: 'ทั้งตัว',
+        passed: validation?.bodyVisible ?? false,
+        pending: pending,
+        metric: metric(
+          () =>
+              'ankle ${_formatConfidence(side == null ? null : frame?[side.ankle]?.confidence)}',
         ),
-        const SizedBox(height: 8),
-        ChecklistTile(
-          label: 'เห็นร่างกายด้านข้างครบ',
-          passed:
-              (validation?.bodyVisible ?? false) &&
-              (validation?.sideView ?? false),
-          pending: validation == null,
+      ),
+      CameraCheck(
+        label: 'แขน–นิ้ว',
+        passed:
+            (validation?.armVisible ?? false) && _fingertipVisible(frame, side),
+        pending: pending,
+        metric: metric(
+          () =>
+              '$sideLetter finger ${_formatConfidence(fingertip?.confidence)}',
         ),
-        ChecklistTile(
-          label: 'เห็นแขนข้างเดียวถึงปลายนิ้ว',
-          passed: (validation?.armVisible ?? false) && fingertipVisible,
-          pending: validation == null,
+      ),
+      CameraCheck(
+        label: 'เท้า 2 ข้าง',
+        passed: frame != null && _stepDetector.canObserveBothFeet(frame),
+        pending: pending,
+        metric: metric(() => 'heel ${_heelConfidenceLabel(frame)}'),
+      ),
+      CameraCheck(
+        label: 'หันข้าง',
+        passed: validation?.sideView ?? false,
+        pending: pending,
+        metric: metric(
+          () => 'conf ${_formatConfidence(validation?.confidence)}',
         ),
-        ChecklistTile(
-          label: 'เห็นเท้าทั้งสองข้าง',
-          passed: frame != null && _stepDetector.canObserveBothFeet(frame),
-          pending: validation == null,
-        ),
-        const SizedBox(height: 14),
-        AutoStartCountdownBanner(
-          seconds: _positioningCountdown,
-          readyMessage:
-              frame != null &&
-                  validation != null &&
-                  _positioningReady(frame, validation)
-              ? 'จัดตำแหน่งครบแล้ว'
-              : 'หันด้านข้างและทำตามคำแนะนำ',
-          countdownMessage: 'ระบบจะเริ่มจำตำแหน่งเท้าเอง ไม่ต้องกดปุ่ม',
-        ),
-      ],
-    );
+      ),
+    ];
   }
 
-  Widget _buildFootCalibration() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        'ยืนวางเท้าตามสบายแล้วอยู่นิ่ง',
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      const SizedBox(height: 8),
-      Text(
-        'ระบบกำลังจำ heel–ankle–toe ของเท้าจริง และใช้ส่วนสูง ${widget.heightCm.toStringAsFixed(0)} ซม. คำนวณสเกลภาพ',
-      ),
-      const SizedBox(height: 14),
-      LinearProgressIndicator(value: _baselineProgress.clamp(0.0, 1.0)),
-      const SizedBox(height: 10),
-      const Text('ถ้าเท้าหรือจุด skeleton ไม่นิ่ง ระบบจะเก็บใหม่อัตโนมัติ'),
-    ],
-  );
+  String _formatConfidence(double? value) =>
+      value == null ? '—' : value.toStringAsFixed(2);
 
-  Widget _buildArmCalibration() {
-    final posture = _postureValidation;
+  String _heelConfidenceLabel(PoseFrame? frame) {
+    final left = frame?[BodyLandmark.leftHeel];
+    final right = frame?[BodyLandmark.rightHeel];
+    if (left == null || right == null) return 'n/a';
+    return math.min(left.confidence, right.confidence).toStringAsFixed(2);
+  }
+
+  Widget _buildDebugPanel() {
     final frame = _lastFrame;
-    final side = _trackedArmSide;
+    final validation = _validation;
+    final side = _trackedArmSide ?? validation?.primarySide;
     final fingertip = frame == null || side == null
         ? null
         : frame[side.indexFinger];
-    final fingertipVisible =
-        fingertip != null &&
-        fingertip.confidence >= AssessmentConfig.poseConfidenceThreshold;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          _armCalibrationMessage,
-          style: Theme.of(context).textTheme.titleMedium,
+    final sideLabel = side == null
+        ? null
+        : side == PrimaryBodySide.left
+        ? 'ซ้าย'
+        : 'ขวา';
+    final (statusColor, status) = frame == null || validation == null
+        ? (Colors.white, 'กำลังค้นหาร่างกาย')
+        : validation.canStart
+        ? (CameraColors.devGood, 'ตรวจจับร่างกายครบ')
+        : (CameraColors.devBad, 'ร่างกายยังไม่ครบหรือไม่ชัด');
+    final confidenceOk =
+        (validation?.confidence ?? 0) >=
+        AssessmentConfig.poseConfidenceThreshold;
+    final posture = _postureValidation;
+    final stateLabel = _stateMachine.state.name
+        .replaceAllMapped(RegExp('[A-Z]'), (m) => '_${m[0]}')
+        .toUpperCase();
+    return CameraDebugPanel(
+      logEventName: 'camera_debug_snapshot',
+      statusColor: statusColor,
+      status: status,
+      confidence: validation?.confidence,
+      rows: [
+        CameraDebugRow('สถานะระบบ', stateLabel),
+        CameraDebugRow(
+          'แขนที่ติดตาม',
+          sideLabel == null ? '—' : '$sideLabel (ฝั่งกล้อง)',
         ),
-        const SizedBox(height: 8),
-        ChecklistTile(
-          label: 'ต้นแขนข้างเดียวตั้งฉากกับลำตัวประมาณ 90°',
-          passed: posture?.armPerpendicularToTorso ?? false,
-          pending: posture == null,
+        CameraDebugRow(
+          'ความมั่นใจท่า',
+          '${_formatConfidence(validation?.confidence)} / '
+              '${AssessmentConfig.poseConfidenceThreshold.toStringAsFixed(2)}',
+          color: confidenceOk ? CameraColors.devGood : CameraColors.devBad,
         ),
-        ChecklistTile(
-          label: 'เหยียดข้อศอกให้ตรง',
-          passed: posture?.elbowExtended ?? false,
-          pending: posture == null,
+        CameraDebugRow(
+          'ปลายนิ้ว',
+          fingertip == null
+              ? '—'
+              : '${fingertip.x.toStringAsFixed(3)}, ${fingertip.y.toStringAsFixed(3)}',
         ),
-        ChecklistTile(
-          label: 'เห็นปลายนิ้วชี้และเหยียดนิ้ว',
-          passed: fingertipVisible,
-          pending: frame == null,
+        CameraDebugRow(
+          'มุมแขน–ลำตัว',
+          posture?.armToTorsoAngleDegrees == null
+              ? '—'
+              : '${posture!.armToTorsoAngleDegrees!.toStringAsFixed(0)}°',
         ),
-        ChecklistTile(
-          label: 'เท้ายังอยู่ตำแหน่งที่คาลิเบรต',
-          passed: _armFootMismatchFrames == 0,
-          pending: _stepDetector.baseline == null,
+        CameraDebugRow(
+          'มุมศอก',
+          posture?.elbowAngleDegrees == null
+              ? '—'
+              : '${posture!.elbowAngleDegrees!.toStringAsFixed(0)}°',
         ),
-        const SizedBox(height: 12),
-        LinearProgressIndicator(value: _armCalibrationProgress.clamp(0.0, 1.0)),
-        const SizedBox(height: 8),
-        Text(
-          'มุมแขน ${posture?.armToTorsoAngleDegrees?.toStringAsFixed(0) ?? '—'}° · '
-          'ข้อศอก ${posture?.elbowAngleDegrees?.toStringAsFixed(0) ?? '—'}°',
+        CameraDebugRow(
+          'ระยะถึงเป้า',
+          '${_currentTargetDistanceCm?.toStringAsFixed(1) ?? '—'} ซม.',
+        ),
+        CameraDebugRow(
+          'จำนวนก้าว',
+          '${_snapshot?.stepCount ?? 0}',
+          color: (_snapshot?.stepCount ?? 0) > 0
+              ? CameraColors.devBad
+              : CameraColors.devGood,
+        ),
+        CameraDebugRow(
+          'เท้า L / R',
+          '${_snapshot?.leftFootMovement.toStringAsFixed(3) ?? '—'} / '
+              '${_snapshot?.rightFootMovement.toStringAsFixed(3) ?? '—'}',
+        ),
+        CameraDebugRow('เอนจิน', _cameraService.engineLabel),
+        CameraDebugRow(
+          'อัตราเฟรม',
+          _metrics == null
+              ? '— fps'
+              : '${_metrics!.framesPerSecond.toStringAsFixed(0)} fps',
+          color: CameraColors.devBad,
         ),
       ],
     );
   }
-
-  Widget _buildReady() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        'เป้าหมายเสมือนพร้อม',
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      const SizedBox(height: 8),
-      Text(
-        '${widget.protocolVariant.thaiLabel} — จุดเป้าหมายถูกตรึงแล้วและจะไม่ตามมือ',
-      ),
-      if (!widget.protocolVariant.isStandard) ...[
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: AppColors.warningContainer,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const Text(
-            'โหมด 1 ฟุตเป็น Modified FAB; ระยะมาตรฐานคือ 10 นิ้ว',
-          ),
-        ),
-      ],
-      const SizedBox(height: 16),
-      AutoStartCountdownBanner(
-        seconds: _readyCountdown,
-        readyMessage: _readyPoseValid
-            ? 'ค้างท่าเดิมได้เลย'
-            : 'นำปลายนิ้วกลับจุดขาวและวางเท้าที่เดิม',
-        countdownMessage: 'ระบบจะเริ่มวัดเอง ไม่ต้องกดปุ่ม',
-      ),
-    ],
-  );
-
-  Widget _buildReaching() => Column(
-    children: [
-      Icon(
-        _targetReached ? Icons.check_circle_rounded : Icons.ads_click_rounded,
-        size: 38,
-        color: _targetReached ? AppColors.normal : AppColors.primary,
-      ),
-      const SizedBox(height: 8),
-      Text(
-        _targetReached ? 'เสร็จสิ้น' : 'เอื้อมปลายนิ้วไปแตะดินสอเสมือน',
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      const SizedBox(height: 8),
-      Text(
-        _currentTargetDistanceCm == null
-            ? 'กำลังติดตามปลายนิ้ว'
-            : 'เหลือถึงเป้าหมาย ${_currentTargetDistanceCm!.toStringAsFixed(1)} ซม.',
-      ),
-      const SizedBox(height: 12),
-      Text(
-        'ตรวจพบ ${_snapshot?.stepCount ?? 0} ก้าว',
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      const SizedBox(height: 8),
-      if (!_targetReached && _voiceEnabled) ...[
-        const Text(
-          'เสียงนำทาง: ไกลเป้าหมายเสียงดังและถี่ ยิ่งใกล้ยิ่งเบาและช้าลง',
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 8),
-      ],
-      const Text(
-        'ไม่ต้องแตะหน้าจอ ระบบจะจบและแสดงคะแนนเมื่อแตะถึงเป้าหมาย',
-        textAlign: TextAlign.center,
-      ),
-    ],
-  );
 
   Widget _buildSupervisionQuestion() => Scaffold(
     appBar: AppBar(title: const Text('คำถามจากผู้ประเมิน')),

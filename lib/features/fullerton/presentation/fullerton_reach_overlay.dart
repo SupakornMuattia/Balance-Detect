@@ -129,6 +129,7 @@ class FullertonReachOverlayPainter extends CustomPainter {
             ? '1 ฟุต'
             : '10 นิ้ว',
         style: const TextStyle(
+          fontFamily: 'IBMPlexSansThaiLooped',
           color: Colors.white,
           fontSize: 12,
           fontWeight: FontWeight.w800,

@@ -64,6 +64,18 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  fonts:
+    - family: IBMPlexSansThaiLooped
+      fonts:
+        - asset: assets/fonts/IBMPlexSansThaiLooped-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexSansThaiLooped-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/IBMPlexSansThaiLooped-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/IBMPlexSansThaiLooped-Bold.ttf
+          weight: 700
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
