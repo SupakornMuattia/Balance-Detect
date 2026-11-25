@@ -16,8 +16,6 @@ abstract final class CameraColors {
   static const chipMetric = Color(0xFFD8CFA8);
   static const caption = Color(0xFFE7EDEC);
 
-  static const guideFrame = Color(0xFFFFCB1F);
-  static const silhouette = Color(0xFF7D8583);
 
   static const devBar = Color(0xFF3A1F70);
   static const devPanel = Color(0xFF211B33);

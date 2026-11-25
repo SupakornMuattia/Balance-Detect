@@ -29,7 +29,6 @@ import 'package:balance_detect/features/pose/presentation/camera_assessment/came
 import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_check_chips.dart';
 import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_colors.dart';
 import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_debug_panel.dart';
-import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_guide_frame.dart';
 import 'package:balance_detect/features/pose/presentation/pose_skeleton_overlay.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service.dart';
 import 'package:balance_detect/features/pose/services/camera_pose_service_factory.dart';
@@ -910,7 +909,6 @@ class _FullertonAssessmentScreenState
         ? 1 / controller.value.aspectRatio
         : controller.value.aspectRatio;
     final overlaySide = _trackedArmSide ?? _validation?.primarySide;
-    final positioning = _stateMachine.state == FullertonState.positioning;
     final (icon, headline, subline) = _headerGuidance;
     return CameraAssessmentLayout(
       stepLabel: 'ขั้นที่ $_currentStep จาก 5: $_title',
@@ -925,10 +923,6 @@ class _FullertonAssessmentScreenState
       preview: CameraPreview(controller),
       previewAspectRatio: ratio,
       previewLayers: [
-        if (positioning)
-          CameraGuideFrame(
-            showSilhouette: !(_validation?.bodyVisible ?? false),
-          ),
         if (showDebug)
           PoseSkeletonOverlay(frame: _lastFrame, trackedSide: overlaySide),
         FullertonReachOverlay(

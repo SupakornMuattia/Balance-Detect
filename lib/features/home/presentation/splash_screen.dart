@@ -43,10 +43,10 @@ class _SplashScreenState extends State<SplashScreen> {
                 color: AppColors.surface,
                 borderRadius: BorderRadius.circular(24),
               ),
-              child: const Icon(
-                Icons.monitor_heart_outlined,
-                size: 54,
-                color: AppColors.primary,
+              padding: const EdgeInsets.all(12),
+              child: Image.asset(
+                'assets/logo/logo_mark.png',
+                semanticLabel: 'Balance Detect logo',
               ),
             ),
             const SizedBox(height: 24),
