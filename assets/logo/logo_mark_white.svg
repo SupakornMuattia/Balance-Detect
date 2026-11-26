@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="70 94 372 372">
+  <title>Balance Detect – logo mark (white figure, transparent; for teal backgrounds)</title>
+  <circle cx="256" cy="146" r="42" fill="#FFFFFF"/>
+  <path d="M140 262 Q256 214 372 262" fill="none" stroke="#FFFFFF" stroke-width="32" stroke-linecap="round"/>
+  <path d="M256 212 V318 M256 318 L212 392 M256 318 L300 392" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M146 420 Q256 452 366 420" fill="none" stroke="#F2A541" stroke-width="24" stroke-linecap="round"/>
+</svg>

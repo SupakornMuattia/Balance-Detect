@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:balance_detect/core/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 /// Home page: header, safety notice, three assessment cards and a clinical
@@ -12,98 +13,83 @@ class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      bottom: false,
-      child: Column(
+  Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
+    // Transparent status bar over the white banner, with dark icons.
+    value: SystemUiOverlayStyle.dark.copyWith(
+      statusBarColor: Colors.transparent,
+    ),
+    child: Scaffold(
+      body: Column(
         children: [
           const _BrandHeader(),
           const Divider(height: 1, thickness: 1, color: AppColors.border),
           Expanded(
-            child: CustomScrollView(
-              slivers: [
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              'เลือกแบบทดสอบ',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.headlineLarge,
-                            ),
-                            const SizedBox(height: 16),
-                            const _SafetyNotice(),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              child: _AssessmentCard(
-                                title: 'วัดระยะเอื้อม',
-                                standardName: 'Functional Reach Test',
-                                illustration: _ReachPainter(),
-                                semanticsLabel:
-                                    'ภาพคนยืนเหยียดแขนเอื้อมไปข้างหน้า',
-                                setupItems: const <_SetupItem>[
-                                  _SetupItem(
-                                    Icons.smartphone_outlined,
-                                    'ใช้กล้องหน้าของมือถือ',
-                                  ),
-                                ],
-                                onStart: () => context.push('/functional-reach'),
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              child: CustomScrollView(
+                slivers: [
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'เลือกแบบทดสอบ',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.headlineLarge,
                               ),
-                            ),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              child: _AssessmentCard(
-                                title: 'ทดสอบเอื้อมหยิบ',
-                                standardName: 'Fullerton Advanced Balance',
-                                illustration: _PickUpPainter(),
-                                semanticsLabel: 'ภาพคนก้าวเท้าและเอื้อมหยิบของ',
-                                setupItems: const <_SetupItem>[
-                                  _SetupItem(
-                                    Icons.smartphone_outlined,
-                                    'ใช้กล้องหน้าของมือถือ',
-                                  ),
-                                ],
-                                onStart: () => context.push('/fullerton'),
+                              const SizedBox(height: 16),
+                              Expanded(
+                                child: _AssessmentCard(
+                                  title: 'ทดสอบวัดระยะการเอื้อม',
+                                  standardName: 'Functional Reach Test',
+                                  illustration: _ReachPainter(),
+                                  semanticsLabel:
+                                      'ภาพคนยืนเหยียดแขนเอื้อมไปข้างหน้า',
+                                  onStart: () =>
+                                      context.push('/functional-reach'),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              child: _AssessmentCard(
-                                title: 'ทดสอบลุก–เดิน–นั่ง',
-                                standardName: 'Timed Up and Go (TUG)',
-                                illustration: _TugPainter(),
-                                semanticsLabel:
-                                    'ภาพลุกจากเก้าอี้ เดิน 3 เมตร หมุนตัวกลับ',
-                                setupItems: const <_SetupItem>[
-                                  _SetupItem(
-                                    Icons.phone_android_rounded,
-                                    'คาดมือถือไว้ที่เอว',
-                                  ),
-                                  _SetupItem(
-                                    Icons.chair_outlined,
-                                    'เตรียมเก้าอี้ 1 ตัว',
-                                  ),
-                                ],
-                                onStart: () => context.push('/tug'),
+                              const SizedBox(height: 14),
+                              Expanded(
+                                child: _AssessmentCard(
+                                  title: 'ทดสอบการเอื้อมหยิบ',
+                                  standardName: 'Fullerton Advanced Balance',
+                                  illustration: _PickUpPainter(),
+                                  semanticsLabel:
+                                      'ภาพคนยืนเหยียดแขนเอื้อมหยิบของ',
+                                  onStart: () => context.push('/fullerton'),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 14),
-                            _SummaryLink(onTap: () => context.push('/summary')),
-                            const SizedBox(height: 12),
-                            const _ClinicalNotice(),
-                          ],
+                              const SizedBox(height: 14),
+                              Expanded(
+                                child: _AssessmentCard(
+                                  title: 'ทดสอบลุก–เดิน–นั่ง',
+                                  standardName: 'Timed Up and Go (TUG)',
+                                  illustration: _TugPainter(),
+                                  semanticsLabel:
+                                      'ภาพลุกจากเก้าอี้ เดิน 3 เมตร หมุนตัวกลับ',
+                                  onStart: () => context.push('/tug'),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              const _ClinicalNotice(),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -116,84 +102,57 @@ class _BrandHeader extends StatelessWidget {
   const _BrandHeader();
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-    child: Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: AppColors.primary,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const Icon(
-            Icons.monitor_heart_outlined,
-            color: AppColors.surface,
-            semanticLabel: 'Balance Detect',
-          ),
+  Widget build(BuildContext context) => ColoredBox(
+    // Fills behind the status bar too, so it matches the banner.
+    color: AppColors.surface,
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.all(4),
+              // Steady Stand mark. Decorative: the app name is read from the title text beside it.
+              child: Image.asset(
+                'assets/logo/logo_mark_white.png',
+                excludeFromSemantics: true,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // lang="en": English font shaping + English screen-reader voice.
+                  Text.rich(
+                    const TextSpan(
+                      text: 'Balance Detect',
+                      locale: Locale('en'),
+                    ),
+                    locale: const Locale('en'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    'คัดกรองการทรงตัวเบื้องต้น',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppColors.outline),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Balance Detect',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              Text(
-                'คัดกรองการทรงตัวเบื้องต้น',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.outline),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _SafetyNotice extends StatelessWidget {
-  const _SafetyNotice();
-
-  static const _background = Color(0xFFFFF4D6);
-  static const _border = Color(0xFFF0D58C);
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-    decoration: BoxDecoration(
-      color: _background,
-      border: Border.all(color: _border),
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Icon(Icons.people_outline, color: AppColors.ink, size: 24),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'เพื่อความปลอดภัย',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'ให้มีคนอยู่ข้าง ๆ ขณะทดสอบ และยืนใกล้ผนังหรือโต๊ะที่จับได้',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     ),
   );
 }
@@ -204,7 +163,6 @@ class _AssessmentCard extends StatelessWidget {
     required this.standardName,
     required this.illustration,
     required this.semanticsLabel,
-    required this.setupItems,
     required this.onStart,
   });
 
@@ -218,7 +176,6 @@ class _AssessmentCard extends StatelessWidget {
   final String standardName;
   final CustomPainter illustration;
   final String semanticsLabel;
-  final List<_SetupItem> setupItems;
   final VoidCallback onStart;
 
   @override
@@ -272,30 +229,7 @@ class _AssessmentCard extends StatelessWidget {
                     color: AppColors.outline,
                   ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: AppColors.border,
-                  ),
-                ),
-                Text('ต้องเตรียม', style: textTheme.titleSmall),
-                const SizedBox(height: 6),
-                for (final item in setupItems)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      children: [
-                        Icon(item.icon, size: 20, color: AppColors.ink),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(item.label, style: textTheme.bodyMedium),
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: onStart,
                   style: FilledButton.styleFrom(
@@ -318,51 +252,6 @@ class _AssessmentCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _SetupItem {
-  const _SetupItem(this.icon, this.label);
-
-  final IconData icon;
-  final String label;
-}
-
-class _SummaryLink extends StatelessWidget {
-  const _SummaryLink({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    margin: EdgeInsets.zero,
-    clipBehavior: Clip.antiAlias,
-    child: InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.insert_chart_outlined_rounded,
-              color: AppColors.primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'ดูสรุปผลการทดสอบล่าสุด',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-            ),
-            const Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 16,
-              color: AppColors.outline,
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
 
 class _ClinicalNotice extends StatelessWidget {
@@ -493,25 +382,38 @@ class _PickUpPainter extends _IllustrationPainter {
   void drawDesign(Canvas canvas) {
     final s = stroke;
     canvas.drawLine(const Offset(50, 98), const Offset(250, 98), floor);
-    // Leaning body with stepping legs.
-    canvas
-      ..drawCircle(const Offset(112, 26), 9, s)
-      ..drawLine(const Offset(115, 35), const Offset(122, 64), s)
-      ..drawLine(const Offset(122, 64), const Offset(100, 95), s)
-      ..drawLine(const Offset(122, 64), const Offset(140, 80), s)
-      ..drawLine(const Offset(140, 80), const Offset(150, 95), s)
-      ..drawLine(const Offset(117, 44), const Offset(98, 64), s)
-      ..drawLine(const Offset(118, 44), const Offset(150, 64), s);
-    dashedLine(canvas, const Offset(156, 67), const Offset(180, 76), s);
-    // Box to pick up.
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(184, 72, 32, 24),
-        const Radius.circular(3),
-      ),
-      s,
+    // Feet plate.
+    canvas.drawLine(
+      const Offset(94, 96),
+      const Offset(106, 96),
+      s..strokeWidth = 5,
     );
-    canvas.drawLine(const Offset(184, 81), const Offset(216, 81), s);
+    s.strokeWidth = 3.2;
+    // Upright body with the arm straight forward, hand marked by a dot.
+    canvas
+      ..drawCircle(const Offset(100, 28), 9, s)
+      ..drawLine(const Offset(100, 37), const Offset(100, 96), s)
+      ..drawLine(const Offset(100, 46), const Offset(150, 46), s)
+      ..drawCircle(
+        const Offset(152, 46),
+        4,
+        Paint()..color = AppColors.primaryDark,
+      );
+    // Dashed reach toward the object.
+    dashedLine(canvas, const Offset(158, 46), const Offset(182, 46), s);
+    arrowHead(canvas, const Offset(185, 46), 0, s);
+    // Pencil-shaped object to pick up.
+    final pencil = Path()
+      ..moveTo(190, 40)
+      ..lineTo(222, 40)
+      ..lineTo(234, 46)
+      ..lineTo(222, 52)
+      ..lineTo(190, 52)
+      ..close();
+    canvas
+      ..drawPath(pencil, s)
+      ..drawLine(const Offset(198, 40), const Offset(198, 52), s)
+      ..drawLine(const Offset(222, 40), const Offset(222, 52), s);
   }
 }
 
@@ -556,10 +458,7 @@ class _TugPainter extends _IllustrationPainter {
     // Turn-around arrow.
     final turn = Path()
       ..moveTo(240, 22)
-      ..arcToPoint(
-        const Offset(242, 52),
-        radius: const Radius.circular(15),
-      )
+      ..arcToPoint(const Offset(242, 52), radius: const Radius.circular(15))
       ..lineTo(232, 52);
     canvas.drawPath(turn, s);
     arrowHead(canvas, const Offset(228, 52), math.pi, s);
