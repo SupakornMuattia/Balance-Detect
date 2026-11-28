@@ -34,6 +34,14 @@ final appRouter = GoRouter(
         StatefulShellBranch(
           routes: <RouteBase>[
             GoRoute(
+              path: '/results',
+              builder: (context, state) => const AssessmentSummaryScreen(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: <RouteBase>[
+            GoRoute(
               path: '/history',
               builder: (context, state) => const HistoryScreen(),
             ),
@@ -109,10 +117,7 @@ final appRouter = GoRouter(
         ),
       ],
     ),
-    GoRoute(
-      path: '/summary',
-      builder: (context, state) => const AssessmentSummaryScreen(),
-    ),
+    GoRoute(path: '/summary', redirect: (context, state) => '/results'),
     GoRoute(
       path: '/history/:sessionId',
       builder: (context, state) =>
@@ -153,6 +158,11 @@ class _MainNavigationScaffold extends StatelessWidget {
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home_rounded),
             label: 'หน้าแรก',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.insert_chart_outlined_rounded),
+            selectedIcon: Icon(Icons.insert_chart_rounded),
+            label: 'ผลการทดสอบ',
           ),
           NavigationDestination(
             icon: Icon(Icons.history_outlined),

@@ -19,7 +19,22 @@ abstract final class AppColors {
   static const ink = Color(0xFF172526);
 }
 
+abstract final class AppFonts {
+  /// Body text: looped Thai glyphs.
+  static const body = 'IBMPlexSansThaiLooped';
+
+  /// Button labels: same looped font as body text, set explicitly because a
+  /// button's textStyle does not inherit the theme's fontFamily.
+  static const button = body;
+}
+
 abstract final class AppTheme {
+  static const _buttonTextStyle = TextStyle(
+    fontFamily: AppFonts.button,
+    fontSize: 18,
+    fontWeight: FontWeight.w700,
+  );
+
   static ThemeData get light {
     final colorScheme =
         ColorScheme.fromSeed(
@@ -41,7 +56,7 @@ abstract final class AppTheme {
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: AppColors.background,
-      fontFamily: 'IBMPlexSansThaiLooped',
+      fontFamily: AppFonts.body,
       visualDensity: VisualDensity.standard,
       textTheme: const TextTheme(
         displaySmall: TextStyle(
@@ -126,7 +141,7 @@ abstract final class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
-          textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          textStyle: _buttonTextStyle,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -138,8 +153,20 @@ abstract final class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
-          textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          textStyle: _buttonTextStyle,
         ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          textStyle: const TextStyle(
+            fontFamily: AppFonts.button,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(textStyle: _buttonTextStyle),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,

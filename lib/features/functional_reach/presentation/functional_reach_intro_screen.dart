@@ -1,17 +1,25 @@
 import 'package:balance_detect/core/constants/assessment_config.dart';
+import 'package:balance_detect/core/services/voice_guidance_service.dart';
 import 'package:balance_detect/core/theme/app_theme.dart';
 import 'package:balance_detect/core/widgets/app_scaffold_body.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 /// Step 1 of 3 ("เตรียมตัว") of the Functional Reach Test.
 class FunctionalReachIntroScreen extends StatefulWidget {
-  const FunctionalReachIntroScreen({super.key, this.savedHeightCm});
+  const FunctionalReachIntroScreen({
+    super.key,
+    this.savedHeightCm,
+    this.voiceGuidance,
+  });
 
-  /// Height stored in the user's profile, if any. When provided, the height
-  /// field is pre-filled and a "using saved height" chip is shown.
+  /// Height stored in the user's profile, if any. Shown as already chosen.
   final double? savedHeightCm;
+
+  /// Speech output for the "ฟังวิธีเตรียมตัว" button. Created lazily when null.
+  final VoiceGuidanceService? voiceGuidance;
 
   @override
   State<FunctionalReachIntroScreen> createState() =>
@@ -21,166 +29,442 @@ class FunctionalReachIntroScreen extends StatefulWidget {
 class _FunctionalReachIntroScreenState
     extends State<FunctionalReachIntroScreen> {
   static const _defaultHeightCm = 160;
+  static const _subtitle =
+      'ยืนนิ่ง แล้วยื่นแขนไปข้างหน้าให้ไกลที่สุด โดยไม่ขยับเท้า';
   static const _steps = <String>[
-    'วางมือถือตั้งตรงให้มั่นคง อย่าให้หน้าจอเอียง',
-    'ถอยออกมายืนให้กล้องหน้าเห็นทั้งร่างกาย',
-    'ยืนหันข้าง ให้กล้องมองเห็นด้านข้างของลำตัว',
-    'ยกแขน 1 ข้างเหยียดตรงไปข้างหน้า ให้สูงระดับหัวไหล่ แล้วกำมือไว้',
-    'ปล่อยแขนอีกข้าง ลงตามสบายแนบข้างลำตัว',
-    'ค่อยๆโน้มตัวเอื้อมมือไปข้างหน้าให้ไกลที่สุดเท่าที่ทำได้ โดยไม่ก้าวหรือขยับเท้า',
+    'ตั้งมือถือให้มั่นคง ไม่ล้มง่าย และให้กล้องหน้าเห็นทั้งตัวรวมถึงมือ',
+    'ยืนหันข้างให้กล้อง ให้แขนข้างที่จะทดสอบอยู่ฝั่งกล้อง',
+    'ยกแขนข้างนั้นไปข้างหน้า ระดับไหล่ แล้วกำมือ',
+    'ปล่อยแขนอีกข้างไว้ข้างลำตัว',
+    'เอื้อมไปข้างหน้าให้ไกลที่สุด โดยไม่ก้าวหรือขยับเท้า',
   ];
+  static const _safetyTitle = 'เพื่อความปลอดภัย';
+  static const _safetyMessage =
+      'ให้มีคนอยู่ข้างๆ ตลอดการทดสอบ และยืนใกล้ผนังหรือโต๊ะที่จับได้ ถ้ารู้สึกเสียการทรงตัว ให้หยุดทันที';
+  static const _autoTitle = 'หลังจากนี้ ไม่ต้องกดปุ่มใด ๆ';
+  static const _autoMessage =
+      'แอปจะเริ่มวัดเองเมื่อเห็นท่าครบ และบอกทุกขั้นด้วยเสียง ไม่ต้องเดินกลับมาแตะหน้าจอระหว่างทดสอบ';
 
-  late final TextEditingController _heightController;
-  String? _heightError;
+  /// Chosen height; null until the user picks one (or a saved one exists).
+  int? _heightCm;
 
-  double get _minHeight => AssessmentConfig.anthropometricMinHeightCm;
-  double get _maxHeight => AssessmentConfig.anthropometricMaxHeightCm;
+  /// True after "จัดตำแหน่งกล้อง" was pressed with no height chosen.
+  bool _heightMissing = false;
+  final _heightKey = GlobalKey();
+  VoiceGuidanceService? _voice;
+  bool _listening = false;
+  bool _atBottom = false;
 
-  bool get _usingSavedHeight {
-    final saved = widget.savedHeightCm;
-    return saved != null &&
-        double.tryParse(_heightController.text.trim()) == saved.roundToDouble();
+  /// Measured footer content height (without the system bottom inset); grows
+  /// with the system text size.
+  double _footerExtent = _defaultFooterExtent;
+
+  void _onFooterSize(Size size) {
+    if (!mounted) return;
+    final extent = size.height - MediaQuery.paddingOf(context).bottom;
+    if ((extent - _footerExtent).abs() > 0.5) {
+      setState(() => _footerExtent = extent);
+    }
   }
+
+  void _updateAtBottom(ScrollMetrics metrics) {
+    if (metrics.axis != Axis.vertical) return;
+    final atBottom = metrics.extentAfter <= 24;
+    if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
+  }
+
+  int get _minHeight => AssessmentConfig.anthropometricMinHeightCm.round();
+  int get _maxHeight => AssessmentConfig.anthropometricMaxHeightCm.round();
 
   @override
   void initState() {
     super.initState();
-    final initial = widget.savedHeightCm?.round() ?? _defaultHeightCm;
-    _heightController = TextEditingController(text: '$initial');
+    _heightCm = widget.savedHeightCm?.round().clamp(_minHeight, _maxHeight);
   }
 
   @override
   void dispose() {
-    _heightController.dispose();
+    // Only dispose a service this screen created itself.
+    if (widget.voiceGuidance == null) _voice?.dispose();
     super.dispose();
   }
 
-  void _stepHeight(int delta) {
-    final current =
-        double.tryParse(_heightController.text.trim())?.round() ??
-        _defaultHeightCm;
-    final next = (current + delta).clamp(
-      _minHeight.round(),
-      _maxHeight.round(),
+  /// Opens the picker; returns true when a height was confirmed.
+  Future<bool> _pickHeight() async {
+    final picked = await showDialog<int>(
+      context: context,
+      barrierColor: _Design.ink.withValues(alpha: .45),
+      builder: (_) => _HeightPickerDialog(
+        initial: (_heightCm ?? _defaultHeightCm).clamp(_minHeight, _maxHeight),
+        min: _minHeight,
+        max: _maxHeight,
+      ),
     );
+    if (picked == null || !mounted) return false;
     setState(() {
-      _heightController.text = '$next';
-      _heightError = null;
+      _heightCm = picked;
+      _heightMissing = false;
     });
+    return true;
   }
 
-  void _continue() {
-    final heightCm = double.tryParse(_heightController.text.trim());
-    if (heightCm == null || heightCm < _minHeight || heightCm > _maxHeight) {
-      setState(
-        () => _heightError =
-            'กรุณากรอกส่วนสูง ${_minHeight.toStringAsFixed(0)}–${_maxHeight.toStringAsFixed(0)} ซม.',
-      );
+  Future<void> _toggleListen() async {
+    final voice = _voice ??= widget.voiceGuidance ?? VoiceGuidanceService();
+    final start = !_listening;
+    setState(() => _listening = start);
+    if (start) {
+      final script = [
+        _subtitle,
+        '$_safetyTitle. $_safetyMessage',
+        for (final (i, step) in _steps.indexed) 'ขั้นที่ ${i + 1}. $step',
+        '$_autoTitle. $_autoMessage',
+      ].join(' ');
+      await voice.announce(script, force: true);
+    } else {
+      await voice.stop();
+    }
+  }
+
+  Future<void> _continue() async {
+    final heightCm = _heightCm;
+    if (heightCm == null) {
+      // A height is required: scroll back to the field and mark it red.
+      setState(() => _heightMissing = true);
+      final fieldContext = _heightKey.currentContext;
+      if (fieldContext != null) {
+        await Scrollable.ensureVisible(
+          fieldContext,
+          alignment: 0.2,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOutCubic,
+        );
+      }
       return;
     }
-    FocusScope.of(context).unfocus();
+    if (_listening) {
+      _voice?.stop();
+      setState(() => _listening = false);
+    }
     context.push(
-      '/functional-reach/test?height=${heightCm.toStringAsFixed(1)}',
-      extra: heightCm,
+      '/functional-reach/test?height=${heightCm.toDouble().toStringAsFixed(1)}',
+      extra: heightCm.toDouble(),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        titleSpacing: 8,
-        title: TextButton.icon(
-          onPressed: () => context.pop(),
-          icon: const Icon(Icons.chevron_left_rounded, size: 28),
-          label: const Text('กลับ'),
-          style: TextButton.styleFrom(
-            foregroundColor: AppColors.primaryDark,
-            textStyle: textTheme.titleMedium?.copyWith(
+    final content = AppScaffoldBody(
+      // Extra bottom space so the last card stays clear of the footer bar.
+      // AppScaffoldBody's SafeArea already adds the system bottom inset.
+      padding: EdgeInsets.fromLTRB(20, 22, 20, 28 + _footerExtent),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _StepProgress(current: 1, total: 3, label: 'เตรียมตัว'),
+          const SizedBox(height: 14),
+          Text(
+            'วัดระยะการเอื้อม',
+            style: textTheme.headlineLarge?.copyWith(
               fontWeight: FontWeight.w700,
+              color: _Design.ink,
             ),
           ),
-        ),
+          const SizedBox(height: 22),
+          const _SafetyCard(title: _safetyTitle, message: _safetyMessage),
+          const SizedBox(height: 22),
+          _HeightCard(
+            key: _heightKey,
+            heightCm: _heightCm,
+            missing: _heightMissing,
+            onPressed: _pickHeight,
+          ),
+          const SizedBox(height: 26),
+          Text(
+            'ทำตามทีละขั้นตอน',
+            style: textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: _Design.ink,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _ListenButton(listening: _listening, onPressed: _toggleListen),
+          const SizedBox(height: 12),
+          for (final (index, step) in _steps.indexed) ...[
+            _NumberedStepCard(number: index + 1, text: step),
+            const SizedBox(height: 10),
+          ],
+          const SizedBox(height: 12),
+          const _AutoStartCard(title: _autoTitle, message: _autoMessage),
+        ],
       ),
-      body: AppScaffoldBody(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      // Transparent status bar over the white top bar, with dark icons.
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+      ),
+      child: Scaffold(
+        backgroundColor: _Design.bg,
+        body: Column(
           children: [
-            const _StepProgress(current: 1, total: 3, label: 'เตรียมตัว'),
-            const SizedBox(height: 16),
-            Text(
-              'วัดระยะเอื้อม',
-              style: textTheme.headlineLarge?.copyWith(
-                fontWeight: FontWeight.w700,
+            const _TopBar(),
+            const Divider(height: 2, thickness: 2, color: _Design.cardBorder),
+            Expanded(
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: Stack(
+                  children: [
+                    NotificationListener<ScrollMetricsNotification>(
+                      onNotification: (n) {
+                        _updateAtBottom(n.metrics);
+                        return false;
+                      },
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (n) {
+                          _updateAtBottom(n.metrics);
+                          return false;
+                        },
+                        child: content,
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: _SizeReporter(
+                        onSize: _onFooterSize,
+                        child: _FooterBar(
+                          visible: _atBottom,
+                          onPressed: _continue,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'ยืนนิ่ง แล้วยื่นแขนไปข้างหน้าให้ไกลที่สุด โดยไม่ขยับเท้า',
-              style: textTheme.bodyLarge?.copyWith(color: AppColors.outline),
-            ),
-            const SizedBox(height: 20),
-            _HeightStepperCard(
-              controller: _heightController,
-              minHeight: _minHeight,
-              maxHeight: _maxHeight,
-              errorText: _heightError,
-              showSavedChip: _usingSavedHeight,
-              onDecrement: () => _stepHeight(-1),
-              onIncrement: () => _stepHeight(1),
-              onChanged: (_) => setState(() => _heightError = null),
-            ),
-            const SizedBox(height: 28),
-            Text(
-              'ทำตามทีละขั้น',
-              style: textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 12),
-            for (final (index, step) in _steps.indexed) ...[
-              _NumberedStepCard(number: index + 1, text: step),
-              const SizedBox(height: 12),
-            ],
-            const _InfoNote(
-              icon: Icons.visibility_outlined,
-              message:
-                  'ระหว่างเอื้อม ให้กล้องเห็นมือของคุณตลอด แอปจะเริ่มวัดเองเมื่อเห็นท่าครบ',
-            ),
-            const SizedBox(height: 24),
-            const _SafetyCard(
-              title: 'เพื่อความปลอดภัย',
-              message:
-                  'ให้มีคนอยู่ข้าง ๆ ตลอดการทดสอบ และยืนใกล้ผนังหรือโต๊ะที่จับได้ ถ้ารู้สึกเสียการทรงตัว ให้หยุดทันที',
             ),
           ],
         ),
       ),
-      bottomNavigationBar: DecoratedBox(
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          border: Border(top: BorderSide(color: AppColors.border)),
+    );
+  }
+}
+
+/// Footer bar height at default text size, used until the real bar is
+/// measured (excludes the system bottom inset).
+const double _defaultFooterExtent = 14 + 68 + 20;
+
+/// System text-size factor for non-text sizes (boxes, icons, circles).
+/// Text itself always follows the system scaler unclamped; boxes and icons
+/// grow with it but are capped so the layout stays usable on a phone.
+double _uiScale(BuildContext context) =>
+    MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6);
+
+/// Colors of the "วัดระยะเอื้อม – เตรียมตัว" design artboard.
+abstract final class _Design {
+  static const ink = Color(0xFF13302D);
+  static const teal = Color(0xFF0E5A53);
+  static const tealDark = Color(0xFF0A4A44);
+  static const muted = Color(0xFF3B524F);
+  static const bg = Color(0xFFEDF3F1);
+  static const card = Color(0xFFFFFFFF);
+  static const cardBorder = Color(0xFFD3E2DE);
+  static const trackOff = Color(0xFFC9DAD5);
+  static const tealSoft = Color(0xFFDDEFEB);
+  static const listenBg = Color(0xFFE4F0ED);
+  static const valueBg = Color(0xFFF2F2F7);
+  static const placeholder = Color(0xFF6E6E73);
+  static const valueArrow = Color(0xFF808085);
+
+  /// Required / missing-height marks. Same red as [AppColors.risk].
+  static const error = AppColors.risk;
+  static const errorSoft = AppColors.riskContainer;
+  static const wheelOff = Color(0xFF8A9894);
+  static const bandBg = Color(0xFFF1F5F4);
+  static const dialogBorder = Color(0xFF6B7C78);
+
+  /// Shadow of the "กลับ" button in the top bar.
+  /// Design `.back-btn`: box-shadow: 0 2px 8px rgba(0,0,0,0.18).
+  static const backButtonShadow = [
+    BoxShadow(
+      color: Color(0x40000000), // black @ 18%
+      offset: Offset(0, 2),
+      blurRadius: 8,
+    ),
+  ];
+
+  /// Shadow of the "จัดตำแหน่งกล้อง" button in the bottom bar.
+  /// Tune independently of [backButtonShadow].
+  /// Design `.cta-btn`: box-shadow: 0 2px 8px rgba(0,0,0,0.18).
+  static const ctaButtonShadow = [
+    BoxShadow(
+      color: Color(0x80000000), // black @ 25%
+      offset: Offset(0, 2),
+      blurRadius: 8,
+    ),
+  ];
+}
+
+/// Amber palette of the safety card.
+abstract final class _Amber {
+  static const background = Color(0xFFFFF1D2);
+  static const ink = Color(0xFF4A3300);
+}
+
+/// Reports its child's laid-out size whenever it changes.
+class _SizeReporter extends SingleChildRenderObjectWidget {
+  const _SizeReporter({required this.onSize, required super.child});
+
+  final ValueChanged<Size> onSize;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderSizeReporter(onSize);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderSizeReporter renderObject,
+  ) => renderObject.onSize = onSize;
+}
+
+class _RenderSizeReporter extends RenderProxyBox {
+  _RenderSizeReporter(this.onSize);
+
+  ValueChanged<Size> onSize;
+  Size? _last;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (size == _last) return;
+    _last = size;
+    final reported = size;
+    WidgetsBinding.instance.addPostFrameCallback((_) => onSize(reported));
+  }
+}
+
+/// White top banner with the outlined "กลับ" button. Fills behind the
+/// status bar, like the Home header.
+class _TopBar extends StatelessWidget {
+  const _TopBar();
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: _Design.card,
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 16, 16, 14),
+        child: Row(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: _Design.backButtonShadow,
+              ),
+              child: OutlinedButton(
+                onPressed: () => context.pop(),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(112, 56),
+                  padding: const EdgeInsets.fromLTRB(12, 0, 20, 0),
+                  // Solid fill so the shadow doesn't show through the button.
+                  backgroundColor: _Design.card,
+                  foregroundColor: _Design.tealDark,
+                  side: const BorderSide(color: _Design.teal, width: 2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontFamily: AppFonts.button,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.chevron_left_rounded,
+                      size: 28 * _uiScale(context),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text('กลับ'),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            12,
-            20,
-            12 + MediaQuery.paddingOf(context).bottom,
-          ),
-          child: FilledButton.icon(
-            onPressed: _continue,
-            iconAlignment: IconAlignment.end,
-            icon: const Icon(Icons.arrow_forward_rounded),
-            label: const Text('จัดตำแหน่งกล้อง'),
+      ),
+    ),
+  );
+}
+
+/// "จัดตำแหน่งกล้อง" bar that slides up once the page is scrolled to the end.
+class _FooterBar extends StatelessWidget {
+  const _FooterBar({required this.visible, required this.onPressed});
+
+  final bool visible;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    ignoring: !visible,
+    child: ExcludeSemantics(
+      excluding: !visible,
+      child: AnimatedSlide(
+        offset: visible ? Offset.zero : const Offset(0, 1),
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+        child: AnimatedOpacity(
+          opacity: visible ? 1 : 0,
+          duration: const Duration(milliseconds: 200),
+          // No bar background: only the floating button is shown.
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              14,
+              16,
+              20 + MediaQuery.paddingOf(context).bottom,
+            ),
+            // Grows with the system text size instead of clipping the label.
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: _Design.ctaButtonShadow,
+              ),
+              child: FilledButton(
+                onPressed: onPressed,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(68),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  backgroundColor: _Design.teal,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontFamily: AppFonts.button,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: const Text(
+                  'จัดตำแหน่งกล้อง',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _StepProgress extends StatelessWidget {
@@ -205,23 +489,21 @@ class _StepProgress extends StatelessWidget {
           Text(
             'ขั้นที่ $current จาก $total: $label',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: AppColors.outline,
+              color: _Design.muted,
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Row(
             children: [
               for (var i = 1; i <= total; i++) ...[
                 if (i > 1) const SizedBox(width: 6),
                 Expanded(
                   child: Container(
-                    height: 8,
+                    height: 10,
                     decoration: BoxDecoration(
-                      color: i <= current
-                          ? AppColors.primaryDark
-                          : AppColors.surfaceStrong,
-                      borderRadius: BorderRadius.circular(4),
+                      color: i <= current ? _Design.teal : _Design.trackOff,
+                      borderRadius: BorderRadius.circular(5),
                     ),
                   ),
                 ),
@@ -234,154 +516,236 @@ class _StepProgress extends StatelessWidget {
   );
 }
 
-class _HeightStepperCard extends StatelessWidget {
-  const _HeightStepperCard({
-    required this.controller,
-    required this.minHeight,
-    required this.maxHeight,
-    required this.showSavedChip,
-    required this.onDecrement,
-    required this.onIncrement,
-    required this.onChanged,
-    this.errorText,
+class _ListenButton extends StatelessWidget {
+  const _ListenButton({required this.listening, required this.onPressed});
+
+  final bool listening;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    toggled: listening,
+    // ShapeDecoration so the shadow follows the pill (StadiumBorder) shape.
+    child: DecoratedBox(
+      decoration: const ShapeDecoration(
+        shape: StadiumBorder(),
+        shadows: _Design.backButtonShadow,
+      ),
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(60),
+          padding: const EdgeInsets.fromLTRB(8, 6, 20, 6),
+          backgroundColor: _Design.listenBg,
+          foregroundColor: _Design.teal,
+          side: const BorderSide(color: _Design.teal, width: 2),
+          shape: const StadiumBorder(),
+          textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontFamily: AppFonts.button,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              listening ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+              size: 26 * _uiScale(context),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Text(
+                listening ? 'กำลังอ่าน… แตะเพื่อหยุด' : 'ฟังวิธีเตรียมตัว',
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// "ส่วนสูงของคุณ" card: the chosen height shown big (or a "เลือกส่วนสูง"
+/// placeholder); tapping it opens the picker. Marked "จำเป็น"; turns red
+/// when the user tried to continue without a height ([missing]).
+class _HeightCard extends StatelessWidget {
+  const _HeightCard({
+    super.key,
+    required this.heightCm,
+    required this.missing,
+    required this.onPressed,
   });
 
-  final TextEditingController controller;
-  final double minHeight;
-  final double maxHeight;
-  final bool showSavedChip;
-  final VoidCallback onDecrement;
-  final VoidCallback onIncrement;
-  final ValueChanged<String> onChanged;
-  final String? errorText;
+  static const _missingMessage = 'กรุณาเลือกส่วนสูงก่อนเริ่มทดสอบ';
+
+  final int? heightCm;
+  final bool missing;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final height = heightCm;
+    final showError = missing && height == null;
+    final baseSize = textTheme.titleLarge?.fontSize ?? 20;
+    final Widget value = height == null
+        ? Text(
+            'เลือกส่วนสูง',
+            style: textTheme.titleLarge?.copyWith(
+              fontSize: baseSize * 1.2,
+              fontWeight: FontWeight.w700,
+              color: showError ? _Design.error : _Design.placeholder,
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                '$height',
+                style: textTheme.headlineLarge?.copyWith(
+                  fontSize: 52,
+                  height: 1.1,
+                  fontWeight: FontWeight.w700,
+                  color: _Design.ink,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'ซม.',
+                style: textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: _Design.ink,
+                ),
+              ),
+            ],
+          );
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
+        color: _Design.card,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _Design.cardBorder, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'ส่วนสูงของคุณ',
-            style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 14),
-          Row(
+          // Wraps under the title at large text sizes.
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _StepperButton(
-                icon: Icons.remove_rounded,
-                tooltip: 'ลดส่วนสูง',
-                onPressed: onDecrement,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Container(
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceMuted,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: errorText != null
-                          ? AppColors.risk
-                          : AppColors.border,
-                    ),
-                  ),
-                  alignment: Alignment.center,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Flexible(
-                        child: IntrinsicWidth(
-                          child: TextField(
-                            controller: controller,
-                            onChanged: onChanged,
-                            textAlign: TextAlign.center,
-                            keyboardType: TextInputType.number,
-                            textInputAction: TextInputAction.done,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(3),
-                            ],
-                            style: textTheme.headlineLarge?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.ink,
-                            ),
-                            decoration: const InputDecoration(
-                              isCollapsed: true,
-                              filled: false,
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              semanticCounterText: '',
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'ซม.',
-                        style: textTheme.titleMedium?.copyWith(
-                          color: AppColors.ink,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+              Semantics(
+                header: true,
+                child: Text(
+                  'ส่วนสูงของคุณ',
+                  style: textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: _Design.ink,
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              _StepperButton(
-                icon: Icons.add_rounded,
-                tooltip: 'เพิ่มส่วนสูง',
-                onPressed: onIncrement,
+              ExcludeSemantics(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _Design.errorSoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'จำเป็น',
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: _Design.error,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            errorText ??
-                'แตะที่ตัวเลขเพื่อพิมพ์ ใส่ได้ ${minHeight.toStringAsFixed(0)}–${maxHeight.toStringAsFixed(0)} ซม. หรือ กดปุ่ม − หรือ +',
-            style: textTheme.bodyMedium?.copyWith(
-              color: errorText != null ? AppColors.risk : AppColors.outline,
-            ),
-          ),
-          if (showSavedChip) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.normalContainer,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.check_rounded,
-                    size: 18,
-                    color: AppColors.primaryDark,
+          const SizedBox(height: 14),
+          Semantics(
+            button: true,
+            label: height == null
+                ? 'ส่วนสูง จำเป็นต้องเลือก ยังไม่ได้เลือก แตะเพื่อเลือก'
+                : 'ส่วนสูง $height เซนติเมตร แตะเพื่อเปลี่ยน',
+            excludeSemantics: true,
+            onTap: onPressed,
+            child: Stack(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: onPressed,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size.fromHeight(96),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 64,
+                        vertical: 12,
+                      ),
+                      backgroundColor: _Design.valueBg,
+                      foregroundColor: _Design.ink,
+                      side: showError
+                          ? const BorderSide(color: _Design.error, width: 2)
+                          : BorderSide.none,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                    ),
+                    // Shrinks instead of clipping at very large text sizes.
+                    child: FittedBox(fit: BoxFit.scaleDown, child: value),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'ใช้ส่วนสูงที่บันทึกไว้ในโปรไฟล์',
-                      style: textTheme.labelLarge?.copyWith(
-                        color: AppColors.primaryDark,
-                        fontWeight: FontWeight.w600,
+                ),
+                // Warning sign at the left edge while the height is missing.
+                if (showError)
+                  const Positioned(
+                    left: 18,
+                    top: 0,
+                    bottom: 0,
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Icon(
+                          Icons.error_rounded,
+                          size: 28,
+                          color: _Design.error,
+                        ),
                       ),
                     ),
                   ),
-                ],
+                // Up/down hint at the right edge of the button.
+                Positioned(
+                  right: 18,
+                  top: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Icon(
+                        Icons.unfold_more_rounded,
+                        size: 28,
+                        color: showError ? _Design.error : _Design.valueArrow,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (showError) ...[
+            const SizedBox(height: 10),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _missingMessage,
+                style: textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: _Design.error,
+                ),
               ),
             ),
           ],
@@ -391,38 +755,261 @@ class _HeightStepperCard extends StatelessWidget {
   }
 }
 
-class _StepperButton extends StatelessWidget {
-  const _StepperButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
+/// Pop-up scroll wheel for choosing the height. Pops the chosen value on
+/// "ตกลง", or null on "ยกเลิก" / tapping outside.
+class _HeightPickerDialog extends StatefulWidget {
+  const _HeightPickerDialog({
+    required this.initial,
+    required this.min,
+    required this.max,
   });
 
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
+  final int initial;
+  final int min;
+  final int max;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 64,
-    height: 64,
-    child: Tooltip(
-      message: tooltip,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          padding: EdgeInsets.zero,
-          minimumSize: const Size(64, 64),
-          foregroundColor: AppColors.primaryDark,
-          side: const BorderSide(color: AppColors.primaryDark, width: 1.5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-        child: Icon(icon, size: 30),
+  State<_HeightPickerDialog> createState() => _HeightPickerDialogState();
+}
+
+class _HeightPickerDialogState extends State<_HeightPickerDialog> {
+  static const double _wheelHeight = 280;
+  static const double _rowHeight = 56;
+
+  late final FixedExtentScrollController _controller;
+  late int _value;
+
+  @override
+  void initState() {
+    super.initState();
+    _value = widget.initial;
+    _controller = FixedExtentScrollController(
+      initialItem: widget.initial - widget.min,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _jumpTo(int value) {
+    final v = value.clamp(widget.min, widget.max);
+    _controller.animateToItem(
+      v - widget.min,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final rowHeight = _rowHeight * _uiScale(context);
+    final bandTop = (_wheelHeight - rowHeight) / 2;
+    final baseSize = textTheme.titleLarge?.fontSize ?? 20;
+    final buttonText = textTheme.titleMedium?.copyWith(
+      fontFamily: AppFonts.button,
+      fontWeight: FontWeight.w700,
+    );
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+      backgroundColor: _Design.card,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(26),
+        side: const BorderSide(color: _Design.dialogBorder, width: 2),
       ),
-    ),
-  );
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              header: true,
+              child: Text(
+                'เลือกส่วนสูง',
+                textAlign: TextAlign.center,
+                style: textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: _Design.ink,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Semantics(
+              label: 'เลือกส่วนสูง',
+              value: '$_value เซนติเมตร',
+              increasedValue:
+                  '${(_value + 1).clamp(widget.min, widget.max)} เซนติเมตร',
+              decreasedValue:
+                  '${(_value - 1).clamp(widget.min, widget.max)} เซนติเมตร',
+              onIncrease: () => _jumpTo(_value + 1),
+              onDecrease: () => _jumpTo(_value - 1),
+              child: SizedBox(
+                height: _wheelHeight,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Stack(
+                    children: [
+                      // Highlight band behind the selected row.
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        top: bandTop,
+                        height: rowHeight,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: _Design.bandBg,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: _Design.teal, width: 2),
+                          ),
+                        ),
+                      ),
+                      ExcludeSemantics(
+                        child: ListWheelScrollView.useDelegate(
+                          controller: _controller,
+                          itemExtent: rowHeight,
+                          physics: const FixedExtentScrollPhysics(),
+                          diameterRatio: 100,
+                          onSelectedItemChanged: (i) =>
+                              setState(() => _value = widget.min + i),
+                          childDelegate: ListWheelChildBuilderDelegate(
+                            childCount: widget.max - widget.min + 1,
+                            builder: (context, i) {
+                              final n = widget.min + i;
+                              final d = (n - _value).abs();
+                              return GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => _jumpTo(n),
+                                child: Center(
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      '$n',
+                                      style: TextStyle(
+                                        fontFamily: AppFonts.body,
+                                        fontSize:
+                                            baseSize *
+                                            (d == 0
+                                                ? 2
+                                                : d == 1
+                                                ? 1.3
+                                                : 1.1),
+                                        fontWeight: d == 0
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
+                                        color: d == 0
+                                            ? _Design.ink
+                                            : _Design.wheelOff,
+                                        height: 1.1,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      // Fixed unit label at the right of the band.
+                      Positioned(
+                        right: 18,
+                        top: bandTop,
+                        height: rowHeight,
+                        child: IgnorePointer(
+                          child: Center(
+                            child: Text(
+                              'ซม.',
+                              style: textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: _Design.ink,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // White fades at the top and bottom edges.
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        height: 84,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [_Design.card, Color(0x00FFFFFF)],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: 84,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                                colors: [_Design.card, Color(0x00FFFFFF)],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(64),
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: _Design.teal,
+                      side: const BorderSide(color: _Design.teal, width: 2),
+                      shape: const StadiumBorder(),
+                      textStyle: buttonText,
+                    ),
+                    child: const Text('ยกเลิก'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(context).pop(_value),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(64),
+                      backgroundColor: _Design.teal,
+                      foregroundColor: Colors.white,
+                      shape: const StadiumBorder(),
+                      textStyle: buttonText,
+                    ),
+                    child: const Text('ตกลง'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _NumberedStepCard extends StatelessWidget {
@@ -434,113 +1021,115 @@ class _NumberedStepCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    // Circle grows with the system text size so the digit never overflows.
+    final circle = 36 * _uiScale(context);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
+        color: _Design.card,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _Design.cardBorder, width: 2),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: circle,
+            height: circle,
             alignment: Alignment.center,
             decoration: const BoxDecoration(
-              color: AppColors.primaryDark,
+              color: _Design.tealSoft,
               shape: BoxShape.circle,
             ),
             child: Text(
               '$number',
               style: textTheme.titleMedium?.copyWith(
-                color: Colors.white,
+                color: _Design.tealDark,
                 fontWeight: FontWeight.w700,
               ),
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(child: Text(text, style: textTheme.bodyLarge)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                text,
+                style: textTheme.bodyLarge?.copyWith(color: _Design.ink),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _InfoNote extends StatelessWidget {
-  const _InfoNote({required this.icon, required this.message});
+/// Icon + title + message callout used by the safety and auto-start cards.
+class _Callout extends StatelessWidget {
+  const _Callout({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.background,
+    required this.iconColor,
+    required this.titleColor,
+    required this.messageColor,
+    this.iconSize = 32,
+    this.radius = 18,
+  });
 
   final IconData icon;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: AppColors.surfaceStrong,
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: AppColors.primaryDark),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            message,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: AppColors.ink),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _SafetyCard extends StatelessWidget {
-  const _SafetyCard({required this.title, required this.message});
-
-  static const _background = Color(0xFFFFF1D3);
-  static const _borderColor = Color(0xFFE6C36A);
-  static const _ink = Color(0xFF4A3300);
-
   final String title;
   final String message;
+  final Color background;
+  final Color iconColor;
+  final Color titleColor;
+  final Color messageColor;
+  final double iconSize;
+  final double radius;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _background,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _borderColor, width: 1.5),
+        color: background,
+        borderRadius: BorderRadius.circular(radius),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.people_outline_rounded, color: _ink, size: 28),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(
+              icon,
+              color: iconColor,
+              size: iconSize * _uiScale(context),
+            ),
+          ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: textTheme.titleMedium?.copyWith(
-                    color: _ink,
-                    fontWeight: FontWeight.w700,
+                Semantics(
+                  header: true,
+                  child: Text(
+                    title,
+                    style: textTheme.titleMedium?.copyWith(
+                      color: titleColor,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   message,
-                  style: textTheme.bodyLarge?.copyWith(color: _ink),
+                  style: textTheme.bodyLarge?.copyWith(color: messageColor),
                 ),
               ],
             ),
@@ -549,4 +1138,42 @@ class _SafetyCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SafetyCard extends StatelessWidget {
+  const _SafetyCard({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => _Callout(
+    icon: Icons.people_outline_rounded,
+    title: title,
+    message: message,
+    background: _Amber.background,
+    iconColor: _Amber.ink,
+    titleColor: _Amber.ink,
+    messageColor: _Amber.ink,
+  );
+}
+
+class _AutoStartCard extends StatelessWidget {
+  const _AutoStartCard({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => _Callout(
+    icon: Icons.do_not_touch_outlined,
+    iconSize: 36,
+    radius: 12,
+    title: title,
+    message: message,
+    background: _Design.tealSoft,
+    iconColor: _Design.tealDark,
+    titleColor: _Design.tealDark,
+    messageColor: _Design.ink,
+  );
 }

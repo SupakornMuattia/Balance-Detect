@@ -1,3 +1,4 @@
+import 'package:balance_detect/core/theme/app_theme.dart';
 import 'package:balance_detect/core/logging/app_logger.dart';
 import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_colors.dart';
 import 'package:flutter/material.dart';
@@ -191,7 +192,11 @@ class _PanelButton extends StatelessWidget {
       foregroundColor: Colors.white,
       side: const BorderSide(color: CameraColors.devAccent, width: 1.5),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+      textStyle: const TextStyle(
+        fontFamily: AppFonts.button,
+        fontSize: 15,
+        fontWeight: FontWeight.w700,
+      ),
     ),
     child: Text(label),
   );

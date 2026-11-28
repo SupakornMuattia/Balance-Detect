@@ -18,7 +18,7 @@ class AssessmentSummaryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => Scaffold(
-    appBar: AppBar(title: const Text('สรุปผลการประเมิน')),
+    appBar: AppBar(title: const Text('ผลการทดสอบ')),
     body: FutureBuilder<List<AssessmentSession>>(
       future: ref.read(assessmentRepositoryProvider).getSessions(),
       builder: (context, snapshot) {

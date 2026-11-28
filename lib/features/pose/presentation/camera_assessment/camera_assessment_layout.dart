@@ -1,3 +1,4 @@
+import 'package:balance_detect/core/theme/app_theme.dart';
 import 'package:balance_detect/features/pose/presentation/camera_assessment/camera_colors.dart';
 import 'package:flutter/material.dart';
 
@@ -144,6 +145,7 @@ class _DeveloperBar extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             textStyle: const TextStyle(
+              fontFamily: AppFonts.button,
               fontSize: 14,
               fontWeight: FontWeight.w700,
             ),
@@ -297,7 +299,11 @@ class _HeaderPill extends StatelessWidget {
         minimumSize: const Size(0, 46),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(
+          fontFamily: AppFonts.button,
+          fontSize: 17,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     ),
   );
